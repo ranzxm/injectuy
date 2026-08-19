@@ -1,6 +1,5 @@
 package com.injectuy.app.core
 
-import android.util.Log
 import com.injectuy.app.parser.PayloadParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -12,8 +11,7 @@ import java.net.Socket
 import java.nio.charset.StandardCharsets
 
 /**
- * Lightweight local HTTP Injector Proxy.
- * Menerima koneksi lokal -> inject HTTP Payload -> teruskan ke Proxy/SSH Host.
+ * Payload Injector with [split] payload support.
  */
 class HttpInjectorProxy(
     private val proxyHost: String,
@@ -31,21 +29,21 @@ class HttpInjectorProxy(
         try {
             serverSocket = ServerSocket(listenPort)
             isRunning = true
-            onLog("Payload Injector listening on 127.0.0.1:$listenPort")
+            onLog("Proxy Injector ready on 127.0.0.1:$listenPort")
 
             while (isRunning) {
                 val clientSocket = serverSocket?.accept() ?: break
                 Thread { handleClient(clientSocket) }.start()
             }
         } catch (e: Exception) {
-            if (isRunning) onLog("Injector Error: ${e.localizedMessage}")
+            if (isRunning) onLog("Injector Exception: ${e.localizedMessage}")
         }
     }
 
     private fun handleClient(client: Socket) {
         var remoteSocket: Socket? = null
         try {
-            onLog("Client connected. Injecting payload...")
+            onLog("Connecting to proxy $proxyHost:$proxyPort...")
             remoteSocket = Socket()
             remoteSocket.connect(InetSocketAddress(proxyHost, proxyPort), 10000)
 
@@ -54,21 +52,24 @@ class HttpInjectorProxy(
             val remoteIn = remoteSocket.getInputStream()
             val remoteOut = remoteSocket.getOutputStream()
 
-            // Kirim parsed payload ke server/proxy
-            val injected = PayloadParser.parse(payloadTemplate, targetHost, targetPort)
-            remoteOut.write(injected.toByteArray(StandardCharsets.UTF_8))
-            remoteOut.flush()
-            onLog("Payload sent -> Response waiting...")
+            val rawInjected = PayloadParser.parse(payloadTemplate, targetHost, targetPort)
+            
+            // Handle [split] payloads
+            val payloadChunks = rawInjected.split("[split]")
+            for (chunk in payloadChunks) {
+                remoteOut.write(chunk.toByteArray(StandardCharsets.UTF_8))
+                remoteOut.flush()
+                Thread.sleep(50)
+            }
+            onLog("Payload injected -> Waiting HTTP response...")
 
-            // Baca response header
             val buffer = ByteArray(4096)
             val read = remoteIn.read(buffer)
             if (read > 0) {
                 val res = String(buffer, 0, read)
                 val statusLine = res.lines().firstOrNull() ?: ""
-                onLog("Server Status: $statusLine")
+                onLog("Status: $statusLine")
 
-                // Relay 2-arah
                 val t1 = Thread { pipeStream(clientIn, remoteOut) }
                 val t2 = Thread { pipeStream(remoteIn, clientOut) }
                 t1.start()
@@ -92,8 +93,7 @@ class HttpInjectorProxy(
                 output.write(buffer, 0, len)
                 output.flush()
             }
-        } catch (_: Exception) {
-        }
+        } catch (_: Exception) {}
     }
 
     fun stop() {

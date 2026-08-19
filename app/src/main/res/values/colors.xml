@@ -1,11 +1,13 @@
 <resources>
-    <color name="primary">#1E88E5</color>
-    <color name="primary_dark">#1565C0</color>
-    <color name="accent">#00E676</color>
-    <color name="bg_dark">#121212</color>
-    <color name="surface_dark">#1E1E1E</color>
-    <color name="text_primary">#FFFFFF</color>
-    <color name="text_secondary">#B0BEC5</color>
-    <color name="status_connected">#00E676</color>
-    <color name="status_disconnected">#FF5252</color>
+    <color name="bg_main">#141416</color>
+    <color name="bg_card">#202024</color>
+    <color name="bg_card_stroke">#2D2D34</color>
+    <color name="btn_connect">#A87FFB</color>
+    <color name="btn_disconnect">#FF5252</color>
+    <color name="btn_text">#121214</color>
+    <color name="text_primary">#F3F4F6</color>
+    <color name="text_secondary">#9CA3AF</color>
+    <color name="text_hint">#6B7280</color>
+    <color name="divider">#2E2E36</color>
+    <color name="log_text">#D1D5DB</color>
 </resources>
