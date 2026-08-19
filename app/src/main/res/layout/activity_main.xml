@@ -60,7 +60,7 @@
             android:background="?attr/selectableItemBackground" />
     </LinearLayout>
 
-    <!-- Top Config Card -->
+    <!-- Top Config Card (Sharp 0dp corners) -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -148,8 +148,8 @@
 
     </LinearLayout>
 
-    <!-- Connect Button -->
-    <Button
+    <!-- Connect Button (Sharp 0dp corners) -->
+    <com.google.android.material.button.MaterialButton
         android:id="@+id/btnConnect"
         android:layout_width="match_parent"
         android:layout_height="52dp"
@@ -157,10 +157,13 @@
         android:text="CONNECT"
         android:textSize="15sp"
         android:textStyle="bold"
+        android:insetTop="0dp"
+        android:insetBottom="0dp"
         android:backgroundTint="@color/btn_connect"
-        android:textColor="@color/btn_text" />
+        android:textColor="@color/btn_text"
+        android:app:cornerRadius="0dp" xmlns:app="http://schemas.android.com/apk/res-auto" />
 
-    <!-- Console Log Window -->
+    <!-- Console Log Window (Sharp left aligned) -->
     <ScrollView
         android:id="@+id/scrollLogs"
         android:layout_width="match_parent"
@@ -173,6 +176,8 @@
             android:id="@+id/tvLog"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:gravity="start|top"
+            android:textAlignment="viewStart"
             android:typeface="monospace"
             android:textSize="12sp"
             android:includeFontPadding="false"

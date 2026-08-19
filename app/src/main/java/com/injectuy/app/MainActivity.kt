@@ -30,6 +30,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
     private var isConnected = false
+    private var isConnecting = false
 
     private val vpnPrepareLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -37,6 +38,8 @@ class MainActivity : AppCompatActivity() {
         if (result.resultCode == RESULT_OK) {
             startTunnelService()
         } else {
+            isConnecting = false
+            updateUiState(false)
             appendLog("VPN Permission Rejected.")
         }
     }
@@ -50,6 +53,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 TunnelVpnService.BROADCAST_STATE -> {
                     val running = intent.getBooleanExtra("running", false)
+                    isConnecting = false
                     updateUiState(running)
                 }
             }
@@ -75,7 +79,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupListeners() {
         binding.btnConnect.setOnClickListener {
-            if (isConnected) {
+            if (isConnected || isConnecting) {
                 stopTunnelService()
             } else {
                 prepareAndStart()
@@ -165,6 +169,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun prepareAndStart() {
+        val targetRaw = binding.etTarget.text.toString().trim()
+        if (targetRaw.isEmpty()) {
+            Toast.makeText(this, "Target is required", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        isConnecting = true
+        setConnectingUiState()
+
         val intent = VpnService.prepare(this)
         if (intent != null) {
             vpnPrepareLauncher.launch(intent)
@@ -177,11 +190,6 @@ class MainActivity : AppCompatActivity() {
         val targetRaw = binding.etTarget.text.toString().trim()
         val proxyRaw = binding.etProxy.text.toString().trim()
         val payloadRaw = binding.etPayload.text.toString().trim()
-
-        if (targetRaw.isEmpty()) {
-            Toast.makeText(this, "Target is required", Toast.LENGTH_SHORT).show()
-            return
-        }
 
         val creds = TargetParser.parse(targetRaw)
         val (proxyHost, proxyPort) = TargetParser.parseProxy(proxyRaw)
@@ -206,10 +214,17 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun stopTunnelService() {
+        isConnecting = false
         val intent = Intent(this, TunnelVpnService::class.java).apply {
             action = TunnelVpnService.ACTION_STOP
         }
         startService(intent)
+    }
+
+    private fun setConnectingUiState() {
+        binding.btnConnect.text = "DISCONNECT"
+        binding.btnConnect.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#FF5252"))
+        binding.btnConnect.setTextColor(Color.WHITE)
     }
 
     private fun updateUiState(running: Boolean) {
