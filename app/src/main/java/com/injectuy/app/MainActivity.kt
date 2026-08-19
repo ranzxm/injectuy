@@ -1,6 +1,9 @@
 package com.injectuy.app
 
+import android.app.AlertDialog
 import android.content.BroadcastReceiver
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -10,11 +13,14 @@ import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
 import android.view.View
+import android.widget.EditText
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import com.injectuy.app.databinding.ActivityMainBinding
 import com.injectuy.app.parser.TargetParser
+import com.injectuy.app.security.ConfigSecurity
+import com.injectuy.app.security.EncryptedConfig
 import com.injectuy.app.service.TunnelVpnService
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -63,6 +69,11 @@ class MainActivity : AppCompatActivity() {
 
         appendLog("Running on $deviceModel ($deviceProduct), Android $release ($id) API $sdk. Version 1.0.0 Build 1.")
 
+        setupListeners()
+        updateUiState(TunnelVpnService.isRunning)
+    }
+
+    private fun setupListeners() {
         binding.btnConnect.setOnClickListener {
             if (isConnected) {
                 stopTunnelService()
@@ -71,7 +82,68 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        updateUiState(TunnelVpnService.isRunning)
+        binding.btnClearLog.setOnClickListener {
+            binding.tvLog.text = ""
+            appendLog("Log cleared.")
+        }
+
+        binding.btnExport.setOnClickListener {
+            showExportDialog()
+        }
+
+        binding.btnImport.setOnClickListener {
+            showImportDialog()
+        }
+    }
+
+    private fun showExportDialog() {
+        val target = binding.etTarget.text.toString().trim()
+        val proxy = binding.etProxy.text.toString().trim()
+        val payload = binding.etPayload.text.toString().trim()
+
+        val config = EncryptedConfig(
+            target = target,
+            proxy = proxy,
+            payload = payload,
+            isLocked = true
+        )
+        val encryptedData = ConfigSecurity.exportConfig(config)
+
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val clip = ClipData.newPlainText("InjectUY Config", encryptedData)
+        clipboard.setPrimaryClip(clip)
+
+        AlertDialog.Builder(this)
+            .setTitle("Config Exported")
+            .setMessage("Config terenkripsi AES-256 berhasil disalin ke clipboard:\n\n$encryptedData")
+            .setPositiveButton("OK", null)
+            .show()
+        appendLog("Config successfully exported & copied to clipboard.")
+    }
+
+    private fun showImportDialog() {
+        val input = EditText(this)
+        input.hint = "Paste encrypted config (INJECTUY:...)"
+
+        AlertDialog.Builder(this)
+            .setTitle("Import Config")
+            .setView(input)
+            .setPositiveButton("IMPORT") { _, _ ->
+                val raw = input.text.toString().trim()
+                val config = ConfigSecurity.importConfig(raw)
+                if (config != null) {
+                    binding.etTarget.setText(config.target)
+                    binding.etProxy.setText(config.proxy)
+                    binding.etPayload.setText(config.payload)
+                    appendLog("Config imported successfully!")
+                    Toast.makeText(this, "Config Imported", Toast.LENGTH_SHORT).show()
+                } else {
+                    appendLog("Error: Invalid or corrupted config string!")
+                    Toast.makeText(this, "Failed to decrypt config", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     override fun onStart() {

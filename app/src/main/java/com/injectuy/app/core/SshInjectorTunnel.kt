@@ -2,6 +2,7 @@ package com.injectuy.app.core
 
 import com.injectuy.app.parser.PayloadParser
 import com.jcraft.jsch.JSch
+import com.jcraft.jsch.Logger
 import com.jcraft.jsch.Session
 import com.jcraft.jsch.SocketFactory
 import kotlinx.coroutines.Dispatchers
@@ -18,10 +19,7 @@ import javax.net.ssl.SSLSocketFactory
 
 /**
  * Native SSH SSL/SNI + HTTP Custom Payload Tunnel Engine.
- * Mendukung 3 mode injector:
- * 1. HTTP Payload (Direct / Proxy)
- * 2. SSL / TLS SNI (SNI Bug Host Spoofing via TLS Handshake)
- * 3. SSL + HTTP Payload (Websocket CDN Cloudflare)
+ * Mendukung verbose SSH message logging.
  */
 class SshInjectorTunnel(
     private val sshHost: String,
@@ -40,6 +38,22 @@ class SshInjectorTunnel(
 
     suspend fun connect() = withContext(Dispatchers.IO) {
         try {
+            // Setup internal JSch Logger untuk menampilkan SSH protocol messages
+            JSch.setLogger(object : Logger {
+                override fun isEnabled(level: Int): Boolean = true
+                override fun log(level: Int, message: String) {
+                    val levelStr = when (level) {
+                        Logger.DEBUG -> "SSH-DEBUG"
+                        Logger.INFO -> "SSH-INFO"
+                        Logger.WARN -> "SSH-WARN"
+                        Logger.ERROR -> "SSH-ERROR"
+                        Logger.FATAL -> "SSH-FATAL"
+                        else -> "SSH"
+                    }
+                    onLog("[$levelStr] $message")
+                }
+            })
+
             onLog("Initializing SSH core...")
             val jsch = JSch()
             session = jsch.getSession(sshUser, sshHost, sshPort)
