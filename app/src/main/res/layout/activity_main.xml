@@ -175,7 +175,7 @@
             android:layout_height="wrap_content"
             android:typeface="monospace"
             android:textSize="12sp"
-            android:lineSpacingExtra="3dp"
+            android:includeFontPadding="false"
             android:textColor="@color/log_text" />
     </ScrollView>
 

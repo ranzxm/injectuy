@@ -227,9 +227,15 @@ class MainActivity : AppCompatActivity() {
 
     private fun appendLog(text: String) {
         val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
-        val rawEntry = "[$time] $text\n"
-        val formatted = com.injectuy.app.util.LogFormatter.format(rawEntry)
-        binding.tvLog.append(formatted)
+        if (text.startsWith("<") || text.contains("<font")) {
+            val formatted = com.injectuy.app.util.LogFormatter.format(text)
+            binding.tvLog.append(formatted)
+            binding.tvLog.append("\n")
+        } else {
+            val rawEntry = "[$time] $text\n"
+            val formatted = com.injectuy.app.util.LogFormatter.format(rawEntry)
+            binding.tvLog.append(formatted)
+        }
         binding.scrollLogs.post {
             binding.scrollLogs.fullScroll(View.FOCUS_DOWN)
         }
