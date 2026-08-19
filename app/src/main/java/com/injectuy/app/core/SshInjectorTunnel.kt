@@ -92,7 +92,7 @@ class SshInjectorTunnel(
 
             if (session?.isConnected == true) {
                 onLog("SSH Authenticated successfully!")
-                session?.setPortForwardingD(localSocksPort)
+                session?.setPortForwardingL(localSocksPort, "127.0.0.1", localSocksPort)
                 onLog("Dynamic SOCKS5 running on 127.0.0.1:$localSocksPort")
                 isConnected = true
             } else {
@@ -108,7 +108,7 @@ class SshInjectorTunnel(
     fun disconnect() {
         try {
             if (session?.isConnected == true) {
-                session?.delPortForwardingD(localSocksPort)
+                session?.delPortForwardingL(localSocksPort)
                 session?.disconnect()
             }
         } catch (_: Exception) {}
