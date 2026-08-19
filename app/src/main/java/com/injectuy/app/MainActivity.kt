@@ -81,7 +81,7 @@ class MainActivity : AppCompatActivity() {
             addAction(TunnelVpnService.BROADCAST_STATE)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(serviceReceiver, filter, RECEIVER_NOT_EXPORTED)
+            registerReceiver(serviceReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
         } else {
             registerReceiver(serviceReceiver, filter)
         }
