@@ -71,7 +71,7 @@ class MainActivity : AppCompatActivity() {
         val sdk = Build.VERSION.SDK_INT
         val id = Build.ID
 
-        appendLog("Running on $deviceModel ($deviceProduct), Android $release ($id) API $sdk. Version 1.0.0 Build 1.")
+        appendLog("Running on $deviceModel ($deviceProduct), Android $release ($id) API $sdk. Version 1.0.1 Build 2.")
 
         setupListeners()
         updateUiState(TunnelVpnService.isRunning)

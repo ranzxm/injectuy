@@ -11,20 +11,16 @@ import android.os.Build
 import android.os.ParcelFileDescriptor
 import androidx.core.app.NotificationCompat
 import com.injectuy.app.MainActivity
-import com.injectuy.app.core.HttpInjectorProxy
-import com.injectuy.app.core.SingboxConfigBuilder
-import com.injectuy.app.parser.VmessParser
+import com.injectuy.app.core.SshInjectorTunnel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
-import java.io.File
-import java.io.FileOutputStream
 
 class TunnelVpnService : VpnService() {
 
     private var vpnInterface: ParcelFileDescriptor? = null
-    private var sshTunnel: com.injectuy.app.core.SshInjectorTunnel? = null
+    private var sshTunnel: SshInjectorTunnel? = null
     private val serviceScope = CoroutineScope(Dispatchers.IO + Job())
 
     companion object {
@@ -33,8 +29,6 @@ class TunnelVpnService : VpnService() {
         const val BROADCAST_LOG = "com.injectuy.LOG"
         const val BROADCAST_STATE = "com.injectuy.STATE"
 
-        const val EXTRA_MODE = "mode" // "SSH" or "VMESS"
-        const val EXTRA_CONFIG = "config"
         const val EXTRA_PAYLOAD = "payload"
         const val EXTRA_PROXY_HOST = "proxy_host"
         const val EXTRA_PROXY_PORT = "proxy_port"
@@ -66,54 +60,34 @@ class TunnelVpnService : VpnService() {
     }
 
     private fun handleStart(intent: Intent) {
-        val mode = intent.getStringExtra(EXTRA_MODE) ?: "VMESS"
-        broadcastLog("Starting tunnel in $mode mode...")
+        val payload = intent.getStringExtra(EXTRA_PAYLOAD) ?: ""
+        val proxyHost = intent.getStringExtra(EXTRA_PROXY_HOST) ?: ""
+        val proxyPort = intent.getIntExtra(EXTRA_PROXY_PORT, 8080)
+        val sshHost = intent.getStringExtra(EXTRA_SSH_HOST) ?: ""
+        val sshPort = intent.getIntExtra(EXTRA_SSH_PORT, 22)
+        val sshUser = intent.getStringExtra(EXTRA_SSH_USER) ?: ""
+        val sshPass = intent.getStringExtra(EXTRA_SSH_PASS) ?: ""
 
         serviceScope.launch {
             try {
-                if (mode == "VMESS") {
-                    val vmessUri = intent.getStringExtra(EXTRA_CONFIG) ?: ""
-                    val bean = VmessParser.parse(vmessUri)
-                    if (bean == null) {
-                        broadcastLog("Error: Invalid VMess URL format!")
-                        stopSelf()
-                        return@launch
-                    }
-
-                    val configJson = SingboxConfigBuilder.buildVmessConfig(bean)
-                    saveConfigFile(configJson)
-                    broadcastLog("VMess Config generated: ${bean.ps.ifEmpty { bean.add }}")
-                } else {
-                    // SSH Injector Mode
-                    val payload = intent.getStringExtra(EXTRA_PAYLOAD) ?: ""
-                    val proxyHost = intent.getStringExtra(EXTRA_PROXY_HOST) ?: ""
-                    val proxyPort = intent.getIntExtra(EXTRA_PROXY_PORT, 8080)
-                    val sshHost = intent.getStringExtra(EXTRA_SSH_HOST) ?: ""
-                    val sshPort = intent.getIntExtra(EXTRA_SSH_PORT, 22)
-                    val sshUser = intent.getStringExtra(EXTRA_SSH_USER) ?: ""
-                    val sshPass = intent.getStringExtra(EXTRA_SSH_PASS) ?: ""
-
-                    sshTunnel = com.injectuy.app.core.SshInjectorTunnel(
-                        sshHost = sshHost,
-                        sshPort = sshPort,
-                        sshUser = sshUser,
-                        sshPass = sshPass,
-                        proxyHost = proxyHost,
-                        proxyPort = proxyPort,
-                        payload = payload,
-                        localSocksPort = 10808,
-                        onLog = { broadcastLog(it) }
-                    )
-                    sshTunnel?.connect()
-                }
+                sshTunnel = SshInjectorTunnel(
+                    sshHost = sshHost,
+                    sshPort = sshPort,
+                    sshUser = sshUser,
+                    sshPass = sshPass,
+                    proxyHost = proxyHost,
+                    proxyPort = proxyPort,
+                    payload = payload,
+                    localSocksPort = 10808,
+                    onLog = { broadcastLog(it) }
+                )
+                sshTunnel?.connect()
 
                 establishVpn()
                 isRunning = true
                 broadcastState(true)
-                broadcastLog("VPN Tunnel Connected Successfully.")
                 updateNotification("Connected")
             } catch (e: Exception) {
-                broadcastLog("Start failed: ${e.localizedMessage}")
                 handleStop()
             }
         }
@@ -128,18 +102,10 @@ class TunnelVpnService : VpnService() {
             .addDnsServer("1.1.1.1")
             .addRoute("0.0.0.0", 0)
 
-        // ponytail: Native Go core via gomobile handles routing directly; Fallback native TUN descriptor
         vpnInterface = builder.establish()
     }
 
-    private fun saveConfigFile(json: String): File {
-        val file = File(filesDir, "config.json")
-        FileOutputStream(file).use { it.write(json.toByteArray()) }
-        return file
-    }
-
     private fun handleStop() {
-        broadcastLog("Stopping VPN service...")
         sshTunnel?.disconnect()
         sshTunnel = null
         try {
@@ -147,9 +113,10 @@ class TunnelVpnService : VpnService() {
             vpnInterface = null
         } catch (_: Exception) {}
 
-        isRunning = false
-        broadcastState(false)
-        broadcastLog("VPN Tunnel Disconnected.")
+        if (isRunning) {
+            isRunning = false
+            broadcastState(false)
+        }
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }

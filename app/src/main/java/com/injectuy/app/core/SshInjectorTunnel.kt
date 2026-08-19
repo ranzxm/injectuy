@@ -12,8 +12,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayInputStream
 import java.io.InputStream
 import java.io.OutputStream
+import java.io.SequenceInputStream
 import java.net.HttpURLConnection
 import java.net.InetSocketAddress
 import java.net.Proxy
@@ -27,14 +29,7 @@ import javax.net.ssl.SSLSocketFactory
 
 /**
  * Native SSH SSL/SNI + HTTP Custom Payload Tunnel Engine.
- * Format log persis seperti HTTP Custom / HTTP Injector:
- * - Connecting to proxy {host} port {port}
- * - Sending Payload: ...
- * - Response: HTTP/1.1 ...
- * - Server Version (SSH-2.0-...)
- * - Server Banner Message (Colored ANSI/HTML)
- * - Auth complete & Connected
- * - Periodic HTTP Ping tester
+ * Menangani HTTP payload injection tanpa menelan buffer SSH identification header.
  */
 class SshInjectorTunnel(
     private val sshHost: String,
@@ -62,7 +57,6 @@ class SshInjectorTunnel(
             session?.setConfig("compression.s2c", "none")
             session?.setConfig("compression.c2s", "none")
 
-            // Listener untuk Server Banner Message
             session?.userInfo = object : UserInfo {
                 override fun getPassphrase(): String? = null
                 override fun getPassword(): String = sshPass
@@ -77,7 +71,8 @@ class SshInjectorTunnel(
             }
 
             session?.setSocketFactory(object : SocketFactory {
-                private var rawSocket: Socket? = null
+                private var wrappedInputStream: InputStream? = null
+                private var rawOutputStream: OutputStream? = null
 
                 override fun createSocket(host: String, port: Int): Socket {
                     val targetServer = if (proxyHost.isNotEmpty()) proxyHost else host
@@ -101,12 +96,11 @@ class SshInjectorTunnel(
                         baseSocket
                     }
 
-                    rawSocket = activeSocket
+                    val out = activeSocket.getOutputStream()
+                    val `in` = activeSocket.getInputStream()
+                    rawOutputStream = out
 
                     if (payload.isNotEmpty()) {
-                        val out = activeSocket.getOutputStream()
-                        val `in` = activeSocket.getInputStream()
-
                         val parsed = PayloadParser.parse(payload, host, port)
                         val chunks = parsed.split("[split]")
                         for (chunk in chunks) {
@@ -116,25 +110,53 @@ class SshInjectorTunnel(
                             Thread.sleep(50)
                         }
 
-                        val buffer = ByteArray(2048)
-                        val read = `in`.read(buffer)
-                        if (read > 0) {
-                            val res = String(buffer, 0, read)
-                            for (line in res.lines()) {
-                                if (line.startsWith("HTTP/", ignoreCase = true)) {
-                                    onLog("Response: $line")
-                                } else if (line.startsWith("SSH-", ignoreCase = true)) {
-                                    onLog(line)
+                        // Baca HTTP response header secara persis baris per baris tanpa menelan buffer SSH
+                        val headerBuffer = StringBuilder()
+                        var sshBuffer = ByteArray(0)
+                        val readBuffer = ByteArray(1024)
+                        var isHeaderComplete = false
+
+                        while (!isHeaderComplete) {
+                            val read = `in`.read(readBuffer)
+                            if (read <= 0) break
+                            val chunkStr = String(readBuffer, 0, read, StandardCharsets.ISO_8859_1)
+                            headerBuffer.append(chunkStr)
+
+                            val doubleCrlfIdx = headerBuffer.indexOf("\r\n\r\n")
+                            if (doubleCrlfIdx != -1) {
+                                isHeaderComplete = true
+                                val fullHeader = headerBuffer.substring(0, doubleCrlfIdx)
+                                for (line in fullHeader.lines()) {
+                                    if (line.isNotBlank()) onLog("Response: $line")
+                                }
+
+                                val leftoverBytes = headerBuffer.substring(doubleCrlfIdx + 4)
+                                    .toByteArray(StandardCharsets.ISO_8859_1)
+                                if (leftoverBytes.isNotEmpty()) {
+                                    sshBuffer = leftoverBytes
+                                    val leftoverStr = String(leftoverBytes, StandardCharsets.ISO_8859_1)
+                                    val firstLine = leftoverStr.lines().firstOrNull() ?: ""
+                                    if (firstLine.startsWith("SSH-", ignoreCase = true)) {
+                                        onLog(firstLine)
+                                    }
                                 }
                             }
                         }
+
+                        wrappedInputStream = if (sshBuffer.isNotEmpty()) {
+                            SequenceInputStream(ByteArrayInputStream(sshBuffer), `in`)
+                        } else {
+                            `in`
+                        }
+                    } else {
+                        wrappedInputStream = `in`
                     }
 
                     return activeSocket
                 }
 
-                override fun getInputStream(socket: Socket): InputStream = socket.getInputStream()
-                override fun getOutputStream(socket: Socket): OutputStream = socket.getOutputStream()
+                override fun getInputStream(socket: Socket): InputStream = wrappedInputStream ?: socket.getInputStream()
+                override fun getOutputStream(socket: Socket): OutputStream = rawOutputStream ?: socket.getOutputStream()
             })
 
             session?.connect(20000)
@@ -147,14 +169,13 @@ class SshInjectorTunnel(
                 onLog("Connected")
                 isConnected = true
 
-                // Start HTTP Ping Loop
                 startHttpPing()
             } else {
                 throw Exception("SSH Connection failed")
             }
         } catch (e: Exception) {
-            onLog("SSH Error: ${e.localizedMessage ?: e.message}")
-            disconnect()
+            val err = e.localizedMessage ?: e.message ?: "Unknown error"
+            onLog("SSH Error: $err")
             throw e
         }
     }
@@ -162,7 +183,7 @@ class SshInjectorTunnel(
     private fun startHttpPing() {
         pingJob?.cancel()
         pingJob = tunnelScope.launch {
-            delay(5000)
+            delay(3000)
             while (isActive && isConnected) {
                 try {
                     val start = System.currentTimeMillis()
@@ -177,8 +198,7 @@ class SshInjectorTunnel(
                     val statusText = if (code in 200..204) "200 OK" else "$code"
                     onLog("HTTP Ping $statusText (${latency}ms)")
                     conn.disconnect()
-                } catch (e: Exception) {
-                    onLog("HTTP Ping timeout")
+                } catch (_: Exception) {
                 }
                 delay(5000)
             }
@@ -186,6 +206,7 @@ class SshInjectorTunnel(
     }
 
     fun disconnect() {
+        if (!isConnected && session == null) return
         onLog("Closing client connection")
         pingJob?.cancel()
         pingJob = null
