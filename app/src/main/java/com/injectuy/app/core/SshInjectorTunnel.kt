@@ -1,7 +1,7 @@
 package com.injectuy.app.core
 
+import com.injectuy.app.parser.PayloadParser
 import com.jcraft.jsch.JSch
-import com.jcraft.jsch.ProxyHTTP
 import com.jcraft.jsch.Session
 import com.jcraft.jsch.SocketFactory
 import kotlinx.coroutines.Dispatchers
@@ -64,7 +64,7 @@ class SshInjectorTunnel(
                         val out = socket.getOutputStream()
                         val `in` = socket.getInputStream()
 
-                        val parsedPayload = com.injectuy.app.parser.PayloadParser.parse(payload, host, port)
+                        val parsedPayload = PayloadParser.parse(payload, host, port)
                         val chunks = parsedPayload.split("[split]")
                         for (chunk in chunks) {
                             out.write(chunk.toByteArray(StandardCharsets.UTF_8))
