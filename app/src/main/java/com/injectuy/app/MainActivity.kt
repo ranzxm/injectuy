@@ -227,7 +227,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun appendLog(text: String) {
         val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
-        binding.tvLog.append("[$time] $text\n")
+        val rawEntry = "[$time] $text\n"
+        val formatted = com.injectuy.app.util.LogFormatter.format(rawEntry)
+        binding.tvLog.append(formatted)
         binding.scrollLogs.post {
             binding.scrollLogs.fullScroll(View.FOCUS_DOWN)
         }

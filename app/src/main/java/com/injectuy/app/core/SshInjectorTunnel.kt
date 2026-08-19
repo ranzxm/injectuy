@@ -2,15 +2,23 @@ package com.injectuy.app.core
 
 import com.injectuy.app.parser.PayloadParser
 import com.jcraft.jsch.JSch
-import com.jcraft.jsch.Logger
 import com.jcraft.jsch.Session
 import com.jcraft.jsch.SocketFactory
+import com.jcraft.jsch.UserInfo
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.InputStream
 import java.io.OutputStream
+import java.net.HttpURLConnection
 import java.net.InetSocketAddress
+import java.net.Proxy
 import java.net.Socket
+import java.net.URL
 import java.nio.charset.StandardCharsets
 import javax.net.ssl.SNIHostName
 import javax.net.ssl.SSLParameters
@@ -19,7 +27,14 @@ import javax.net.ssl.SSLSocketFactory
 
 /**
  * Native SSH SSL/SNI + HTTP Custom Payload Tunnel Engine.
- * Mendukung verbose SSH message logging.
+ * Format log persis seperti HTTP Custom / HTTP Injector:
+ * - Connecting to proxy {host} port {port}
+ * - Sending Payload: ...
+ * - Response: HTTP/1.1 ...
+ * - Server Version (SSH-2.0-...)
+ * - Server Banner Message (Colored ANSI/HTML)
+ * - Auth complete & Connected
+ * - Periodic HTTP Ping tester
  */
 class SshInjectorTunnel(
     private val sshHost: String,
@@ -35,32 +50,31 @@ class SshInjectorTunnel(
 ) {
     private var session: Session? = null
     private var isConnected = false
+    private var pingJob: Job? = null
+    private val tunnelScope = CoroutineScope(Dispatchers.IO)
 
     suspend fun connect() = withContext(Dispatchers.IO) {
         try {
-            // Setup internal JSch Logger untuk menampilkan SSH protocol messages
-            JSch.setLogger(object : Logger {
-                override fun isEnabled(level: Int): Boolean = true
-                override fun log(level: Int, message: String) {
-                    val levelStr = when (level) {
-                        Logger.DEBUG -> "SSH-DEBUG"
-                        Logger.INFO -> "SSH-INFO"
-                        Logger.WARN -> "SSH-WARN"
-                        Logger.ERROR -> "SSH-ERROR"
-                        Logger.FATAL -> "SSH-FATAL"
-                        else -> "SSH"
-                    }
-                    onLog("[$levelStr] $message")
-                }
-            })
-
-            onLog("Initializing SSH core...")
             val jsch = JSch()
             session = jsch.getSession(sshUser, sshHost, sshPort)
             session?.setPassword(sshPass)
             session?.setConfig("StrictHostKeyChecking", "no")
             session?.setConfig("compression.s2c", "none")
             session?.setConfig("compression.c2s", "none")
+
+            // Listener untuk Server Banner Message
+            session?.userInfo = object : UserInfo {
+                override fun getPassphrase(): String? = null
+                override fun getPassword(): String = sshPass
+                override fun promptPassword(message: String?): Boolean = true
+                override fun promptPassphrase(message: String?): Boolean = true
+                override fun promptYesNo(message: String?): Boolean = true
+                override fun showMessage(message: String?) {
+                    if (!message.isNullOrEmpty()) {
+                        onLog("Server Message:\n$message")
+                    }
+                }
+            }
 
             session?.setSocketFactory(object : SocketFactory {
                 private var rawSocket: Socket? = null
@@ -69,20 +83,19 @@ class SshInjectorTunnel(
                     val targetServer = if (proxyHost.isNotEmpty()) proxyHost else host
                     val targetPortNum = if (proxyHost.isNotEmpty()) proxyPort else port
 
-                    onLog("Connecting to $targetServer:$targetPortNum...")
+                    onLog("Connecting to proxy $targetServer port $targetPortNum")
                     val baseSocket = Socket()
                     baseSocket.connect(InetSocketAddress(targetServer, targetPortNum), 15000)
 
                     val activeSocket: Socket = if (sniHost.isNotEmpty() || targetPortNum == 443) {
                         val serverName = if (sniHost.isNotEmpty()) sniHost else targetServer
-                        onLog("Handshaking SSL/TLS with SNI: $serverName")
+                        onLog("SSL/TLS Handshake: $serverName")
                         val sslFactory = SSLSocketFactory.getDefault() as SSLSocketFactory
                         val sslSocket = sslFactory.createSocket(baseSocket, targetServer, targetPortNum, true) as SSLSocket
                         val params = SSLParameters()
                         params.serverNames = listOf(SNIHostName(serverName))
                         sslSocket.sslParameters = params
                         sslSocket.startHandshake()
-                        onLog("SSL Connected! Protocol: ${sslSocket.session.protocol} | Cipher: ${sslSocket.session.cipherSuite}")
                         sslSocket
                     } else {
                         baseSocket
@@ -91,13 +104,13 @@ class SshInjectorTunnel(
                     rawSocket = activeSocket
 
                     if (payload.isNotEmpty()) {
-                        onLog("Injecting payload...")
                         val out = activeSocket.getOutputStream()
                         val `in` = activeSocket.getInputStream()
 
                         val parsed = PayloadParser.parse(payload, host, port)
                         val chunks = parsed.split("[split]")
                         for (chunk in chunks) {
+                            onLog("Sending Payload: $chunk")
                             out.write(chunk.toByteArray(StandardCharsets.UTF_8))
                             out.flush()
                             Thread.sleep(50)
@@ -107,8 +120,13 @@ class SshInjectorTunnel(
                         val read = `in`.read(buffer)
                         if (read > 0) {
                             val res = String(buffer, 0, read)
-                            val statusLine = res.lines().firstOrNull() ?: ""
-                            onLog("Proxy Response: $statusLine")
+                            for (line in res.lines()) {
+                                if (line.startsWith("HTTP/", ignoreCase = true)) {
+                                    onLog("Response: $line")
+                                } else if (line.startsWith("SSH-", ignoreCase = true)) {
+                                    onLog(line)
+                                }
+                            }
                         }
                     }
 
@@ -119,14 +137,18 @@ class SshInjectorTunnel(
                 override fun getOutputStream(socket: Socket): OutputStream = socket.getOutputStream()
             })
 
-            onLog("Starting SSH Authentication...")
             session?.connect(20000)
 
             if (session?.isConnected == true) {
-                onLog("SSH Authenticated successfully!")
+                val serverVersion = session?.serverVersion ?: "SSH-2.0"
+                onLog(serverVersion)
+                onLog("Auth complete")
                 session?.setPortForwardingL(localSocksPort, "127.0.0.1", localSocksPort)
-                onLog("SOCKS5 Dynamic Forwarding ready on 127.0.0.1:$localSocksPort")
+                onLog("Connected")
                 isConnected = true
+
+                // Start HTTP Ping Loop
+                startHttpPing()
             } else {
                 throw Exception("SSH Connection failed")
             }
@@ -137,7 +159,36 @@ class SshInjectorTunnel(
         }
     }
 
+    private fun startHttpPing() {
+        pingJob?.cancel()
+        pingJob = tunnelScope.launch {
+            delay(5000)
+            while (isActive && isConnected) {
+                try {
+                    val start = System.currentTimeMillis()
+                    val proxy = Proxy(Proxy.Type.SOCKS, InetSocketAddress("127.0.0.1", localSocksPort))
+                    val url = URL("http://cp.cloudflare.com/generate_204")
+                    val conn = url.openConnection(proxy) as HttpURLConnection
+                    conn.connectTimeout = 4000
+                    conn.readTimeout = 4000
+                    conn.requestMethod = "GET"
+                    val code = conn.responseCode
+                    val latency = System.currentTimeMillis() - start
+                    val statusText = if (code in 200..204) "200 OK" else "$code"
+                    onLog("HTTP Ping $statusText (${latency}ms)")
+                    conn.disconnect()
+                } catch (e: Exception) {
+                    onLog("HTTP Ping timeout")
+                }
+                delay(5000)
+            }
+        }
+    }
+
     fun disconnect() {
+        onLog("Closing client connection")
+        pingJob?.cancel()
+        pingJob = null
         try {
             if (session?.isConnected == true) {
                 session?.delPortForwardingL(localSocksPort)
@@ -146,6 +197,7 @@ class SshInjectorTunnel(
         } catch (_: Exception) {}
         session = null
         isConnected = false
-        onLog("SSH Tunnel disconnected.")
+        onLog("Client connection closed")
+        onLog("Disconnected")
     }
 }
