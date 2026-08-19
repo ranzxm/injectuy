@@ -1,0 +1,11 @@
+<resources>
+    <string name="app_name">InjectUY</string>
+    <string name="ssh_mode">SSH + HTTP Payload</string>
+    <string name="vmess_mode">VMess Link</string>
+    <string name="btn_start">START</string>
+    <string name="btn_stop">STOP</string>
+    <string name="status_disconnected">Disconnected</string>
+    <string name="status_connecting">Connecting...</string>
+    <string name="status_connected">Connected</string>
+    <string name="vpn_channel_name">InjectUY VPN Service</string>
+</resources>
