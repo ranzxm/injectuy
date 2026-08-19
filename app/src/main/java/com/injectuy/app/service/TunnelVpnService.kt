@@ -24,7 +24,7 @@ import java.io.FileOutputStream
 class TunnelVpnService : VpnService() {
 
     private var vpnInterface: ParcelFileDescriptor? = null
-    private var injectorProxy: HttpInjectorProxy? = null
+    private var sshTunnel: com.injectuy.app.core.SshInjectorTunnel? = null
     private val serviceScope = CoroutineScope(Dispatchers.IO + Job())
 
     companion object {
@@ -84,25 +84,27 @@ class TunnelVpnService : VpnService() {
                     saveConfigFile(configJson)
                     broadcastLog("VMess Config generated: ${bean.ps.ifEmpty { bean.add }}")
                 } else {
-                    // SSH Mode
+                    // SSH Injector Mode
                     val payload = intent.getStringExtra(EXTRA_PAYLOAD) ?: ""
                     val proxyHost = intent.getStringExtra(EXTRA_PROXY_HOST) ?: ""
                     val proxyPort = intent.getIntExtra(EXTRA_PROXY_PORT, 8080)
                     val sshHost = intent.getStringExtra(EXTRA_SSH_HOST) ?: ""
                     val sshPort = intent.getIntExtra(EXTRA_SSH_PORT, 22)
+                    val sshUser = intent.getStringExtra(EXTRA_SSH_USER) ?: ""
+                    val sshPass = intent.getStringExtra(EXTRA_SSH_PASS) ?: ""
 
-                    if (proxyHost.isNotEmpty() && payload.isNotEmpty()) {
-                        injectorProxy = HttpInjectorProxy(
-                            proxyHost = proxyHost,
-                            proxyPort = proxyPort,
-                            targetHost = sshHost,
-                            targetPort = sshPort,
-                            payloadTemplate = payload,
-                            listenPort = 8989,
-                            onLog = { broadcastLog(it) }
-                        )
-                        launch { injectorProxy?.start() }
-                    }
+                    sshTunnel = com.injectuy.app.core.SshInjectorTunnel(
+                        sshHost = sshHost,
+                        sshPort = sshPort,
+                        sshUser = sshUser,
+                        sshPass = sshPass,
+                        proxyHost = proxyHost,
+                        proxyPort = proxyPort,
+                        payload = payload,
+                        localSocksPort = 10808,
+                        onLog = { broadcastLog(it) }
+                    )
+                    sshTunnel?.connect()
                 }
 
                 establishVpn()
@@ -138,8 +140,8 @@ class TunnelVpnService : VpnService() {
 
     private fun handleStop() {
         broadcastLog("Stopping VPN service...")
-        injectorProxy?.stop()
-        injectorProxy = null
+        sshTunnel?.disconnect()
+        sshTunnel = null
         try {
             vpnInterface?.close()
             vpnInterface = null
