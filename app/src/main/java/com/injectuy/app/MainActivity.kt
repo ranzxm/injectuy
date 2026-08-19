@@ -196,7 +196,6 @@ class MainActivity : AppCompatActivity() {
 
         val intent = Intent(this, TunnelVpnService::class.java).apply {
             action = TunnelVpnService.ACTION_START
-            putExtra(TunnelVpnService.EXTRA_MODE, "SSH")
             putExtra(TunnelVpnService.EXTRA_SSH_HOST, creds.host)
             putExtra(TunnelVpnService.EXTRA_SSH_PORT, creds.port)
             putExtra(TunnelVpnService.EXTRA_SSH_USER, creds.user)
