@@ -11,15 +11,17 @@ import java.io.OutputStream
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.nio.charset.StandardCharsets
+import javax.net.ssl.SNIHostName
+import javax.net.ssl.SSLParameters
+import javax.net.ssl.SSLSocket
+import javax.net.ssl.SSLSocketFactory
 
 /**
- * Native SSH Dynamic Port Forwarding (SOCKS5 Proxy).
- * Alur SSH Injector:
- * 1. Buka Socket ke Bug / Proxy Host
- * 2. Kirim HTTP Payload (dengan support [split], [host], dll)
- * 3. Terima response HTTP 101 Switching Protocols / 200 OK
- * 4. Lanjutkan SSH Handshake & Autentikasi di dalam stream socket tersebut
- * 5. Buka SOCKS5 proxy lokal (misal port 10808) untuk routing seluruh traffic Android via VpnService.
+ * Native SSH SSL/SNI + HTTP Custom Payload Tunnel Engine.
+ * Mendukung 3 mode injector:
+ * 1. HTTP Payload (Direct / Proxy)
+ * 2. SSL / TLS SNI (SNI Bug Host Spoofing via TLS Handshake)
+ * 3. SSL + HTTP Payload (Websocket CDN Cloudflare)
  */
 class SshInjectorTunnel(
     private val sshHost: String,
@@ -29,6 +31,7 @@ class SshInjectorTunnel(
     private val proxyHost: String,
     private val proxyPort: Int,
     private val payload: String,
+    private val sniHost: String = "",
     private val localSocksPort: Int = 10808,
     private val onLog: (String) -> Unit
 ) {
@@ -37,7 +40,7 @@ class SshInjectorTunnel(
 
     suspend fun connect() = withContext(Dispatchers.IO) {
         try {
-            onLog("Initializing SSH tunnel engine...")
+            onLog("Initializing SSH core...")
             val jsch = JSch()
             session = jsch.getSession(sshUser, sshHost, sshPort)
             session?.setPassword(sshPass)
@@ -45,27 +48,41 @@ class SshInjectorTunnel(
             session?.setConfig("compression.s2c", "none")
             session?.setConfig("compression.c2s", "none")
 
-            // Custom socket factory untuk inject HTTP payload sebelum SSH handshake
             session?.setSocketFactory(object : SocketFactory {
                 private var rawSocket: Socket? = null
 
                 override fun createSocket(host: String, port: Int): Socket {
-                    val socket = Socket()
-                    rawSocket = socket
-
                     val targetServer = if (proxyHost.isNotEmpty()) proxyHost else host
                     val targetPortNum = if (proxyHost.isNotEmpty()) proxyPort else port
 
-                    onLog("Connecting to Proxy: $targetServer:$targetPortNum")
-                    socket.connect(InetSocketAddress(targetServer, targetPortNum), 15000)
+                    onLog("Connecting to $targetServer:$targetPortNum...")
+                    val baseSocket = Socket()
+                    baseSocket.connect(InetSocketAddress(targetServer, targetPortNum), 15000)
+
+                    val activeSocket: Socket = if (sniHost.isNotEmpty() || targetPortNum == 443) {
+                        val serverName = if (sniHost.isNotEmpty()) sniHost else targetServer
+                        onLog("Handshaking SSL/TLS with SNI: $serverName")
+                        val sslFactory = SSLSocketFactory.getDefault() as SSLSocketFactory
+                        val sslSocket = sslFactory.createSocket(baseSocket, targetServer, targetPortNum, true) as SSLSocket
+                        val params = SSLParameters()
+                        params.serverNames = listOf(SNIHostName(serverName))
+                        sslSocket.sslParameters = params
+                        sslSocket.startHandshake()
+                        onLog("SSL Connected! Protocol: ${sslSocket.session.protocol} | Cipher: ${sslSocket.session.cipherSuite}")
+                        sslSocket
+                    } else {
+                        baseSocket
+                    }
+
+                    rawSocket = activeSocket
 
                     if (payload.isNotEmpty()) {
-                        onLog("Injecting HTTP Payload...")
-                        val out = socket.getOutputStream()
-                        val `in` = socket.getInputStream()
+                        onLog("Injecting payload...")
+                        val out = activeSocket.getOutputStream()
+                        val `in` = activeSocket.getInputStream()
 
-                        val parsedPayload = PayloadParser.parse(payload, host, port)
-                        val chunks = parsedPayload.split("[split]")
+                        val parsed = PayloadParser.parse(payload, host, port)
+                        val chunks = parsed.split("[split]")
                         for (chunk in chunks) {
                             out.write(chunk.toByteArray(StandardCharsets.UTF_8))
                             out.flush()
@@ -80,20 +97,21 @@ class SshInjectorTunnel(
                             onLog("Proxy Response: $statusLine")
                         }
                     }
-                    return socket
+
+                    return activeSocket
                 }
 
                 override fun getInputStream(socket: Socket): InputStream = socket.getInputStream()
                 override fun getOutputStream(socket: Socket): OutputStream = socket.getOutputStream()
             })
 
-            onLog("Starting SSH Handshake...")
+            onLog("Starting SSH Authentication...")
             session?.connect(20000)
 
             if (session?.isConnected == true) {
                 onLog("SSH Authenticated successfully!")
                 session?.setPortForwardingL(localSocksPort, "127.0.0.1", localSocksPort)
-                onLog("Dynamic SOCKS5 running on 127.0.0.1:$localSocksPort")
+                onLog("SOCKS5 Dynamic Forwarding ready on 127.0.0.1:$localSocksPort")
                 isConnected = true
             } else {
                 throw Exception("SSH Connection failed")
@@ -114,6 +132,6 @@ class SshInjectorTunnel(
         } catch (_: Exception) {}
         session = null
         isConnected = false
-        onLog("SSH Tunnel closed.")
+        onLog("SSH Tunnel disconnected.")
     }
 }
