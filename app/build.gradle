@@ -11,8 +11,8 @@ android {
         applicationId "com.injectuy.app"
         minSdk 21
         targetSdk 34
-        versionCode 9
-        versionName "1.1.6"
+        versionCode 10
+        versionName "1.1.7"
 
         ndk {
             abiFilters 'armeabi-v7a', 'arm64-v8a', 'x86_64'

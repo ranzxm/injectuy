@@ -198,6 +198,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showExportDialog() {
+        if (isSshLocked || isProxyLocked || isPayloadLocked) {
+            AlertDialog.Builder(this)
+                .setTitle("Config locked")
+                .setMessage("Locked configs cannot be exported or modified. Clear the config first if you need to create a new one.")
+                .setPositiveButton("OK", null)
+                .show()
+            return
+        }
         val content = layoutInflater.inflate(R.layout.dialog_export_config, null)
         val nameInput = content.findViewById<EditText>(R.id.etConfigName)
         val expiryCheck = content.findViewById<CheckBox>(R.id.cbExpire)
