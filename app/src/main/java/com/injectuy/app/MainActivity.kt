@@ -16,6 +16,7 @@ import android.view.View
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.PopupMenu
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -44,6 +45,13 @@ class MainActivity : AppCompatActivity() {
     private var activeServerMessage = ""
     private var activeExpireDate = 0L
     private var pendingExportData: String? = null
+
+    private companion object {
+        const val MENU_IMPORT = 1
+        const val MENU_EXPORT = 2
+        const val MENU_CLEAR_CONFIG = 3
+        const val MENU_CLEAR_LOG = 4
+    }
 
     private val saveConfigLauncher = registerForActivityResult(
         ActivityResultContracts.CreateDocument("application/octet-stream")
@@ -144,22 +152,40 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        binding.btnClearLog.setOnClickListener {
-            binding.tvLog.text = ""
-            appendLog("Log cleared.")
-        }
+        binding.btnAppInfo.setOnClickListener { showAppInfo() }
+        binding.btnMenu.setOnClickListener { showOverflowMenu() }
+    }
 
-        binding.btnExport.setOnClickListener {
-            showExportDialog()
+    private fun showOverflowMenu() {
+        val menu = PopupMenu(this, binding.btnMenu)
+        val configActionsEnabled = !isConnected && !isConnecting
+        menu.menu.add(0, MENU_IMPORT, 0, "Import config").isEnabled = configActionsEnabled
+        menu.menu.add(0, MENU_EXPORT, 1, "Export config").isEnabled = configActionsEnabled
+        if (isSshLocked || isProxyLocked || isPayloadLocked) {
+            menu.menu.add(0, MENU_CLEAR_CONFIG, 2, "Clear config").isEnabled = configActionsEnabled
         }
+        menu.menu.add(0, MENU_CLEAR_LOG, 3, "Clear log")
+        menu.setOnMenuItemClickListener { item ->
+            when (item.itemId) {
+                MENU_IMPORT -> showImportDialog()
+                MENU_EXPORT -> showExportDialog()
+                MENU_CLEAR_CONFIG -> clearLockedConfig()
+                MENU_CLEAR_LOG -> {
+                    binding.tvLog.text = ""
+                    appendLog("Log cleared.")
+                }
+            }
+            true
+        }
+        menu.show()
+    }
 
-        binding.btnImport.setOnClickListener {
-            showImportDialog()
-        }
-
-        binding.btnClearConfig.setOnClickListener {
-            clearLockedConfig()
-        }
+    private fun showAppInfo() {
+        AlertDialog.Builder(this)
+            .setTitle("InjectUY")
+            .setMessage("Version ${BuildConfig.VERSION_NAME} (Build ${BuildConfig.VERSION_CODE})\n\nCreated by bcXrefulTEAM")
+            .setPositiveButton("OK", null)
+            .show()
     }
 
     private fun showExportDialog() {
@@ -275,7 +301,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun setConfigField(field: EditText, value: String, locked: Boolean) {
         field.setText(if (locked) "" else value)
-        field.hint = if (locked) "CONFIG LOCKED" else ""
+        field.hint = ""
     }
 
     private fun restoreLockedConfigState(state: Bundle?) {
@@ -324,11 +350,13 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateLockedConfigStatus() {
         val hasLockedConfig = isSshLocked || isProxyLocked || isPayloadLocked
-        binding.btnClearConfig.visibility = if (hasLockedConfig) View.VISIBLE else View.GONE
+        binding.targetGroup.visibility = if (isSshLocked) View.GONE else View.VISIBLE
+        binding.proxyGroup.visibility = if (isProxyLocked) View.GONE else View.VISIBLE
+        binding.payloadGroup.visibility = if (isPayloadLocked) View.GONE else View.VISIBLE
         binding.tvConfigStatus.visibility = if (hasLockedConfig) View.VISIBLE else View.GONE
         if (hasLockedConfig) {
-            val expiry = if (activeExpireDate > 0) formatExpiryDate(activeExpireDate) else "never"
-            binding.tvConfigStatus.text = "CONFIG LOCKED - expires: $expiry"
+            val expiry = if (activeExpireDate > 0) formatExpiryDate(activeExpireDate) else "Never"
+            binding.tvConfigStatus.text = "Locked config | Expires: $expiry"
         }
     }
 
@@ -467,9 +495,6 @@ class MainActivity : AppCompatActivity() {
         binding.etTarget.isEnabled = enabled && !isSshLocked
         binding.etProxy.isEnabled = enabled && !isProxyLocked
         binding.etPayload.isEnabled = enabled && !isPayloadLocked
-        binding.btnImport.isEnabled = enabled
-        binding.btnExport.isEnabled = enabled
-        binding.btnClearConfig.isEnabled = enabled
     }
 
     private fun appendLog(text: String) {
