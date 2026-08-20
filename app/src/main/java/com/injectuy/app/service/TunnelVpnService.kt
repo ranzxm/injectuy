@@ -189,12 +189,19 @@ class TunnelVpnService : VpnService() {
             this, 0, intent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
+        val stopIntent = PendingIntent.getService(
+            this,
+            1,
+            Intent(this, TunnelVpnService::class.java).apply { action = ACTION_STOP },
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
 
         return NotificationCompat.Builder(this, "vpn_channel")
             .setContentTitle("InjectUY Tunnel")
             .setContentText(status)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentIntent(pIntent)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Disconnect", stopIntent)
             .setOngoing(true)
             .build()
     }

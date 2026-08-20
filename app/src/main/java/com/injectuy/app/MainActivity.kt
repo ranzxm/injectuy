@@ -13,6 +13,8 @@ import android.graphics.Color
 import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
+import android.text.Editable
+import android.text.TextWatcher
 import android.view.View
 import android.widget.CheckBox
 import android.widget.EditText
@@ -45,12 +47,15 @@ class MainActivity : AppCompatActivity() {
     private var activeServerMessage = ""
     private var activeExpireDate = 0L
     private var pendingExportData: String? = null
+    private var isApplyingConfig = false
 
     private companion object {
         const val MENU_IMPORT = 1
         const val MENU_EXPORT = 2
         const val MENU_CLEAR_CONFIG = 3
         const val MENU_CLEAR_LOG = 4
+        const val PREFS_NAME = "injectuy_config"
+        const val PREF_CONFIG = "saved_config"
     }
 
     private val saveConfigLauncher = registerForActivityResult(
@@ -119,6 +124,7 @@ class MainActivity : AppCompatActivity() {
         appendLog("InjectUY ready.")
 
         setupListeners()
+        restorePersistedConfig()
         restoreLockedConfigState(savedInstanceState)
         updateUiState(TunnelVpnService.isRunning)
     }
@@ -148,6 +154,15 @@ class MainActivity : AppCompatActivity() {
 
         binding.btnAppInfo.setOnClickListener { showAppInfo() }
         binding.btnMenu.setOnClickListener { showOverflowMenu() }
+        listOf(binding.etTarget, binding.etProxy, binding.etPayload).forEach { field ->
+            field.addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(text: CharSequence?, start: Int, count: Int, after: Int) = Unit
+                override fun onTextChanged(text: CharSequence?, start: Int, before: Int, count: Int) = Unit
+                override fun afterTextChanged(text: Editable?) {
+                    if (!isApplyingConfig) saveConfigState()
+                }
+            })
+        }
     }
 
     private fun showOverflowMenu() {
@@ -302,7 +317,8 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun applyImportedConfig(config: EncryptedConfig) {
+    private fun applyImportedConfig(config: EncryptedConfig, announce: Boolean = true, persist: Boolean = true) {
+        isApplyingConfig = true
         val legacyLockAll = config.isLocked
         isSshLocked = config.lockSsh || legacyLockAll
         isProxyLocked = config.lockProxy || legacyLockAll
@@ -319,9 +335,13 @@ class MainActivity : AppCompatActivity() {
         setConfigField(binding.etPayload, config.payload, isPayloadLocked)
         setConfigFormEnabled(!isConnected && !isConnecting)
         updateLockedConfigStatus()
+        isApplyingConfig = false
 
-        appendLog("Config '$activeConfigName' imported successfully.")
-        Toast.makeText(this, "Config Imported", Toast.LENGTH_SHORT).show()
+        if (persist) saveConfigState()
+        if (announce) {
+            appendLog("Config '$activeConfigName' imported successfully.")
+            Toast.makeText(this, "Config Imported", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun setConfigField(field: EditText, value: String, locked: Boolean) {
@@ -348,11 +368,41 @@ class MainActivity : AppCompatActivity() {
         updateLockedConfigStatus()
     }
 
+    private fun restorePersistedConfig() {
+        val savedConfig = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getString(PREF_CONFIG, null) ?: return
+        val config = ConfigSecurity.importConfig(savedConfig)
+        if (config == null || ConfigSecurity.isExpired(config)) {
+            getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().remove(PREF_CONFIG).apply()
+            return
+        }
+        applyImportedConfig(config, announce = false, persist = false)
+    }
+
+    private fun saveConfigState() {
+        if (!::binding.isInitialized) return
+        val config = EncryptedConfig(
+            fileName = activeConfigName,
+            serverMessage = activeServerMessage,
+            target = currentTarget(),
+            proxy = currentProxy(),
+            payload = currentPayload(),
+            lockSsh = isSshLocked,
+            lockProxy = isProxyLocked,
+            lockPayload = isPayloadLocked,
+            expireDate = activeExpireDate
+        )
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            .edit()
+            .putString(PREF_CONFIG, ConfigSecurity.exportConfig(config))
+            .apply()
+    }
+
     private fun clearLockedConfig() {
         if (isConnected || isConnecting) {
             Toast.makeText(this, "Disconnect before clearing config", Toast.LENGTH_SHORT).show()
             return
         }
+        isApplyingConfig = true
         lockedTarget = null
         lockedProxy = null
         lockedPayload = null
@@ -368,8 +418,10 @@ class MainActivity : AppCompatActivity() {
         binding.etTarget.hint = ""
         binding.etProxy.hint = ""
         binding.etPayload.hint = ""
+        isApplyingConfig = false
         setConfigFormEnabled(true)
         updateLockedConfigStatus()
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().remove(PREF_CONFIG).apply()
         appendLog("Locked config cleared.")
     }
 

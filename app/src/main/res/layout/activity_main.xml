@@ -75,7 +75,6 @@
                 android:background="@null"
                 android:paddingTop="4dp"
                 android:paddingBottom="6dp"
-                android:text="hi.xham.web.id:80@devdd117:117"
                 android:textColor="@color/text_primary"
                 android:textSize="15sp"
                 android:singleLine="true" />
@@ -107,7 +106,6 @@
                 android:background="@null"
                 android:paddingTop="4dp"
                 android:paddingBottom="6dp"
-                android:text="104.17.70.206:80"
                 android:textColor="@color/text_primary"
                 android:textSize="15sp"
                 android:singleLine="true" />
@@ -139,7 +137,6 @@
                 android:background="@null"
                 android:paddingTop="4dp"
                 android:paddingBottom="4dp"
-                android:text="GET / HTTP/1.1[crlf]Host: blog.ruangguru.com:80[crlf]Connection: Keep-Alive[crlf][crlf]PATCH / HTTP/1.1[crlf]Host: [host][crlf]Upgrade:websocket[crlf][crlf][split]HTTP/enhanced 200 Ok[crlf]"
                 android:textColor="@color/text_primary"
                 android:textSize="13sp"
                 android:minLines="3"
