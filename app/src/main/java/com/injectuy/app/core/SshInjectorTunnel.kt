@@ -64,11 +64,7 @@ class SshInjectorTunnel(
                 override fun promptPassword(message: String?): Boolean = true
                 override fun promptPassphrase(message: String?): Boolean = true
                 override fun promptYesNo(message: String?): Boolean = true
-                override fun showMessage(message: String?) {
-                    if (!message.isNullOrEmpty()) {
-                        onLog("Server Message:\n$message")
-                    }
-                }
+                override fun showMessage(message: String?) = Unit
             }
 
             session?.setSocketFactory(object : SocketFactory {
@@ -79,13 +75,13 @@ class SshInjectorTunnel(
                     val targetServer = if (proxyHost.isNotEmpty()) proxyHost else host
                     val targetPortNum = if (proxyHost.isNotEmpty()) proxyPort else port
 
-                    onLog("Connecting to proxy $targetServer port $targetPortNum")
+                    onLog("Connecting to tunnel server...")
                     val baseSocket = Socket()
                     baseSocket.connect(InetSocketAddress(targetServer, targetPortNum), 15000)
 
                     val activeSocket: Socket = if (sniHost.isNotEmpty() || targetPortNum == 443) {
                         val serverName = if (sniHost.isNotEmpty()) sniHost else targetServer
-                        onLog("SSL/TLS Handshake: $serverName")
+                        onLog("Securing connection...")
                         val sslFactory = SSLSocketFactory.getDefault() as SSLSocketFactory
                         val sslSocket = sslFactory.createSocket(baseSocket, targetServer, targetPortNum, true) as SSLSocket
                         val params = SSLParameters()
@@ -105,11 +101,11 @@ class SshInjectorTunnel(
                         val parsed = PayloadParser.parse(payload, host, port)
                         val chunks = parsed.split("[split]")
                         for (chunk in chunks) {
-                            onLog("Sending Payload: $chunk")
                             out.write(chunk.toByteArray(StandardCharsets.UTF_8))
                             out.flush()
                             Thread.sleep(50)
                         }
+                        onLog("Tunnel request sent.")
 
                         // Baca HTTP response header secara persis baris per baris tanpa menelan buffer SSH
                         val headerBuffer = StringBuilder()
@@ -126,20 +122,17 @@ class SshInjectorTunnel(
                             val doubleCrlfIdx = headerBuffer.indexOf("\r\n\r\n")
                             if (doubleCrlfIdx != -1) {
                                 isHeaderComplete = true
-                                val fullHeader = headerBuffer.substring(0, doubleCrlfIdx)
-                                for (line in fullHeader.lines()) {
-                                    if (line.isNotBlank()) onLog("Response: $line")
-                                }
+                                val statusLine = headerBuffer.substring(0, doubleCrlfIdx)
+                                    .lineSequence()
+                                    .firstOrNull()
+                                    ?.take(120)
+                                    .orEmpty()
+                                if (statusLine.isNotBlank()) onLog("Proxy response: $statusLine")
 
                                 val leftoverBytes = headerBuffer.substring(doubleCrlfIdx + 4)
                                     .toByteArray(StandardCharsets.ISO_8859_1)
                                 if (leftoverBytes.isNotEmpty()) {
                                     sshBuffer = leftoverBytes
-                                    val leftoverStr = String(leftoverBytes, StandardCharsets.ISO_8859_1)
-                                    val firstLine = leftoverStr.lines().firstOrNull() ?: ""
-                                    if (firstLine.startsWith("SSH-", ignoreCase = true)) {
-                                        onLog(firstLine)
-                                    }
                                 }
                             }
                         }
@@ -168,9 +161,8 @@ class SshInjectorTunnel(
             session?.connect(20000)
 
             if (session?.isConnected == true) {
-                val serverVersion = session?.serverVersion ?: "SSH-2.0"
-                onLog(serverVersion)
-                onLog("Auth complete")
+                onLog("SSH server ready.")
+                onLog("Authentication successful.")
                 session?.setPortForwardingL(localSocksPort, "127.0.0.1", localSocksPort)
                 onLog("Connected")
                 isConnected = true
@@ -180,8 +172,7 @@ class SshInjectorTunnel(
                 throw Exception("SSH Connection failed")
             }
         } catch (e: Exception) {
-            val err = e.localizedMessage ?: e.message ?: "Unknown error"
-            onLog("SSH Error: $err")
+            onLog("Connection error.")
             throw e
         }
     }

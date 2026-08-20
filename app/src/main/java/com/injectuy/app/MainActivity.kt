@@ -116,13 +116,7 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        val deviceModel = Build.MODEL
-        val deviceProduct = Build.PRODUCT
-        val release = Build.VERSION.RELEASE
-        val sdk = Build.VERSION.SDK_INT
-        val id = Build.ID
-
-        appendLog("Running on $deviceModel ($deviceProduct), Android $release ($id) API $sdk. Version ${BuildConfig.VERSION_NAME} Build ${BuildConfig.VERSION_CODE}.")
+        appendLog("InjectUY ready.")
 
         setupListeners()
         restoreLockedConfigState(savedInstanceState)

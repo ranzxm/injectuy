@@ -114,15 +114,15 @@ class TunnelVpnService : VpnService() {
                 establishVpn()
                 isRunning = true
                 broadcastState(true)
-                broadcastLog("Tunnel connected. Device traffic is bypassed until a packet forwarder is available.")
-                updateNotification("Tunnel connected - traffic bypassed")
+                broadcastLog("Connection established.")
+                updateNotification("Connection established")
             } catch (e: CancellationException) {
                 tunnel?.disconnect()
                 throw e
             } catch (e: Exception) {
                 tunnel?.disconnect()
                 if (generation == startGeneration) {
-                    broadcastLog("Connection failed: ${e.localizedMessage ?: "Unknown error"}")
+                    broadcastLog("Connection failed. Check your configuration and network.")
                     handleStop()
                 }
             }

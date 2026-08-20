@@ -43,8 +43,9 @@ object LogFormatter {
         }
 
         highlightWord(ssb, rawText, "Connected", Color.parseColor("#00E676"))
+        highlightWord(ssb, rawText, "Connection established.", Color.parseColor("#00E676"))
         highlightWord(ssb, rawText, "Connecting...", Color.parseColor("#FFD600"))
-        highlightWord(ssb, rawText, "Auth complete", Color.parseColor("#E0E0E0"))
+        highlightWord(ssb, rawText, "Authentication successful.", Color.parseColor("#E0E0E0"))
         highlightWord(ssb, rawText, "Disconnected", Color.parseColor("#FF5252"))
         highlightWord(ssb, rawText, "Auth fail", Color.parseColor("#FF5252"))
 
