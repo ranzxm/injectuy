@@ -221,6 +221,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setConnectingUiState() {
+        setConfigFormEnabled(false)
         binding.btnConnect.text = "DISCONNECT"
         binding.btnConnect.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#FF5252"))
         binding.btnConnect.setTextColor(Color.WHITE)
@@ -228,6 +229,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateUiState(running: Boolean) {
         isConnected = running
+        setConfigFormEnabled(!running)
         if (running) {
             binding.btnConnect.text = "DISCONNECT"
             binding.btnConnect.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#FF5252"))
@@ -237,6 +239,14 @@ class MainActivity : AppCompatActivity() {
             binding.btnConnect.backgroundTintList = ColorStateList.valueOf(Color.parseColor("#A87FFB"))
             binding.btnConnect.setTextColor(Color.parseColor("#121214"))
         }
+    }
+
+    private fun setConfigFormEnabled(enabled: Boolean) {
+        binding.etTarget.isEnabled = enabled
+        binding.etProxy.isEnabled = enabled
+        binding.etPayload.isEnabled = enabled
+        binding.btnImport.isEnabled = enabled
+        binding.btnExport.isEnabled = enabled
     }
 
     private fun appendLog(text: String) {
