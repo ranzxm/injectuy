@@ -1,6 +1,7 @@
 package com.injectuy.app
 
 import android.app.AlertDialog
+import android.app.DatePickerDialog
 import android.content.BroadcastReceiver
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -15,7 +16,6 @@ import android.os.Bundle
 import android.view.View
 import android.widget.CheckBox
 import android.widget.EditText
-import android.widget.LinearLayout
 import android.widget.PopupMenu
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -189,39 +189,73 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showExportDialog() {
-        val content = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(48, 0, 48, 0)
+        val content = layoutInflater.inflate(R.layout.dialog_export_config, null)
+        val nameInput = content.findViewById<EditText>(R.id.etConfigName)
+        val expiryCheck = content.findViewById<CheckBox>(R.id.cbExpire)
+        val expiryDate = content.findViewById<android.widget.TextView>(R.id.tvExpiryDate)
+        val messageCheck = content.findViewById<CheckBox>(R.id.cbServerMessage)
+        val messageInput = content.findViewById<EditText>(R.id.etServerMessage)
+        val sshLock = content.findViewById<CheckBox>(R.id.cbLockSsh)
+        val proxyLock = content.findViewById<CheckBox>(R.id.cbLockProxy)
+        val payloadLock = content.findViewById<CheckBox>(R.id.cbLockPayload)
+        var selectedExpiryDate = activeExpireDate
+
+        nameInput.setText(activeConfigName)
+        expiryCheck.isChecked = activeExpireDate > 0
+        messageCheck.isChecked = activeServerMessage.isNotBlank()
+        messageInput.setText(activeServerMessage)
+        sshLock.isChecked = isSshLocked
+        proxyLock.isChecked = isProxyLocked
+        payloadLock.isChecked = isPayloadLocked
+
+        fun updateExpiryDate() {
+            expiryDate.text = "Expires: ${formatExpiryDate(selectedExpiryDate)}"
+            expiryDate.visibility = View.VISIBLE
         }
-        val nameInput = dialogInput("Config name", activeConfigName)
-        val expiryInput = dialogInput("Expiry date (YYYY-MM-DD, optional)", formatExpiryDate(activeExpireDate))
-        val messageInput = dialogInput("Custom server message (optional)", activeServerMessage)
-        val sshLock = CheckBox(this).apply { text = "Lock SSH"; isChecked = isSshLocked }
-        val proxyLock = CheckBox(this).apply { text = "Lock proxy"; isChecked = isProxyLocked }
-        val payloadLock = CheckBox(this).apply { text = "Lock payload"; isChecked = isPayloadLocked }
-        content.addView(nameInput)
-        content.addView(expiryInput)
-        content.addView(messageInput)
-        content.addView(sshLock)
-        content.addView(proxyLock)
-        content.addView(payloadLock)
+
+        fun showDatePicker() {
+            val calendar = Calendar.getInstance().apply {
+                if (selectedExpiryDate > 0) timeInMillis = selectedExpiryDate
+            }
+            val dialog = DatePickerDialog(this, { _, year, month, day ->
+                selectedExpiryDate = Calendar.getInstance().apply {
+                    set(year, month, day, 23, 59, 59)
+                    set(Calendar.MILLISECOND, 999)
+                }.timeInMillis
+                updateExpiryDate()
+            }, calendar.get(Calendar.YEAR), calendar.get(Calendar.MONTH), calendar.get(Calendar.DAY_OF_MONTH))
+            dialog.setOnCancelListener {
+                if (selectedExpiryDate == 0L) expiryCheck.isChecked = false
+            }
+            dialog.show()
+        }
+
+        if (expiryCheck.isChecked) updateExpiryDate()
+        messageInput.visibility = if (messageCheck.isChecked) View.VISIBLE else View.GONE
+        expiryCheck.setOnCheckedChangeListener { _, checked ->
+            if (checked) {
+                showDatePicker()
+            } else {
+                selectedExpiryDate = 0L
+                expiryDate.visibility = View.GONE
+            }
+        }
+        messageCheck.setOnCheckedChangeListener { _, checked ->
+            messageInput.visibility = if (checked) View.VISIBLE else View.GONE
+        }
+        expiryDate.setOnClickListener { showDatePicker() }
 
         fun buildConfig(): EncryptedConfig? {
-            val expiry = parseExpiryDate(expiryInput.text.toString().trim())
-            if (expiry == null) {
-                Toast.makeText(this, "Use expiry date format YYYY-MM-DD", Toast.LENGTH_SHORT).show()
-                return null
-            }
             return EncryptedConfig(
                 fileName = nameInput.text.toString().trim().ifEmpty { "InjectUY Config" },
-                serverMessage = messageInput.text.toString().trim(),
+                serverMessage = if (messageCheck.isChecked) messageInput.text.toString().trim() else "",
                 target = currentTarget(),
                 proxy = currentProxy(),
                 payload = currentPayload(),
                 lockSsh = sshLock.isChecked,
                 lockProxy = proxyLock.isChecked,
                 lockPayload = payloadLock.isChecked,
-                expireDate = expiry
+                expireDate = if (expiryCheck.isChecked) selectedExpiryDate else 0L
             )
         }
 
@@ -245,12 +279,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showImportDialog() {
-        val input = EditText(this)
-        input.hint = "Paste encrypted config (INJECTUY:...)"
+        val content = layoutInflater.inflate(R.layout.dialog_import_config, null)
+        val input = content.findViewById<EditText>(R.id.etImportData)
 
         AlertDialog.Builder(this)
             .setTitle("Import Config")
-            .setView(input)
+            .setView(content)
             .setPositiveButton("IMPORT") { _, _ ->
                 importConfig(input.text.toString())
             }
@@ -293,9 +327,6 @@ class MainActivity : AppCompatActivity() {
         updateLockedConfigStatus()
 
         appendLog("Config '$activeConfigName' imported successfully.")
-        if (activeServerMessage.isNotBlank()) {
-            appendLog("Server message: $activeServerMessage")
-        }
         Toast.makeText(this, "Config Imported", Toast.LENGTH_SHORT).show()
     }
 
@@ -366,31 +397,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun currentPayload(): String = lockedPayload ?: binding.etPayload.text.toString().trim()
 
-    private fun dialogInput(hint: String, value: String): EditText {
-        return EditText(this).apply {
-            this.hint = hint
-            setText(value)
-        }
-    }
-
-    private fun parseExpiryDate(value: String): Long? {
-        if (value.isBlank()) return 0L
-        val formatter = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { isLenient = false }
-        val date = try {
-            formatter.parse(value)
-        } catch (_: Exception) {
-            null
-        } ?: return null
-        if (formatter.format(date) != value) return null
-        return Calendar.getInstance().apply {
-            time = date
-            set(Calendar.HOUR_OF_DAY, 23)
-            set(Calendar.MINUTE, 59)
-            set(Calendar.SECOND, 59)
-            set(Calendar.MILLISECOND, 999)
-        }.timeInMillis
-    }
-
     private fun formatExpiryDate(expiryDate: Long): String {
         if (expiryDate <= 0) return ""
         return SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(expiryDate))
@@ -450,6 +456,7 @@ class MainActivity : AppCompatActivity() {
             putExtra(TunnelVpnService.EXTRA_SSH_PORT, creds.port)
             putExtra(TunnelVpnService.EXTRA_SSH_USER, creds.user)
             putExtra(TunnelVpnService.EXTRA_SSH_PASS, creds.pass)
+            putExtra(TunnelVpnService.EXTRA_SERVER_MESSAGE, activeServerMessage)
             putExtra(TunnelVpnService.EXTRA_PROXY_HOST, proxyHost)
             putExtra(TunnelVpnService.EXTRA_PROXY_PORT, proxyPort)
             putExtra(TunnelVpnService.EXTRA_PAYLOAD, payloadRaw)
@@ -499,7 +506,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun appendLog(text: String) {
         val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
-        if (text.startsWith("<") || text.contains("<font")) {
+        if (text.trimStart().startsWith("<")) {
             val formatted = com.injectuy.app.util.LogFormatter.format(text)
             binding.tvLog.append(formatted)
             binding.tvLog.append("\n")

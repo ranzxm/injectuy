@@ -39,6 +39,7 @@ class SshInjectorTunnel(
     private val proxyHost: String,
     private val proxyPort: Int,
     private val payload: String,
+    private val serverMessage: String = "",
     private val sniHost: String = "",
     private val localSocksPort: Int = 10808,
     private val onLog: (String) -> Unit
@@ -141,6 +142,11 @@ class SshInjectorTunnel(
                                     }
                                 }
                             }
+                        }
+
+                        if (serverMessage.isNotBlank()) {
+                            onLog("Server Message:")
+                            onLog(serverMessage)
                         }
 
                         wrappedInputStream = if (sshBuffer.isNotEmpty()) {

@@ -43,6 +43,7 @@ class TunnelVpnService : VpnService() {
         const val EXTRA_SSH_PORT = "ssh_port"
         const val EXTRA_SSH_USER = "ssh_user"
         const val EXTRA_SSH_PASS = "ssh_pass"
+        const val EXTRA_SERVER_MESSAGE = "server_message"
 
         var isRunning = false
             private set
@@ -74,6 +75,7 @@ class TunnelVpnService : VpnService() {
         val sshPort = intent.getIntExtra(EXTRA_SSH_PORT, 22)
         val sshUser = intent.getStringExtra(EXTRA_SSH_USER) ?: ""
         val sshPass = intent.getStringExtra(EXTRA_SSH_PASS) ?: ""
+        val serverMessage = intent.getStringExtra(EXTRA_SERVER_MESSAGE) ?: ""
 
         val generation = ++startGeneration
         startJob?.cancel()
@@ -96,6 +98,7 @@ class TunnelVpnService : VpnService() {
                     proxyHost = proxyHost,
                     proxyPort = proxyPort,
                     payload = payload,
+                    serverMessage = serverMessage,
                     localSocksPort = 10808,
                     onLog = { broadcastLog(it) }
                 )
