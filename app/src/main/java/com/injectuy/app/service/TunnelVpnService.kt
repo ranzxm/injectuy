@@ -13,6 +13,7 @@ import androidx.core.app.NotificationCompat
 import com.injectuy.app.MainActivity
 import com.injectuy.app.core.SshInjectorTunnel
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -27,6 +28,7 @@ class TunnelVpnService : VpnService() {
     private var sshTunnel: SshInjectorTunnel? = null
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var startJob: Job? = null
+    @Volatile private var startGeneration = 0L
 
     companion object {
         const val ACTION_START = "com.injectuy.START"
@@ -73,15 +75,20 @@ class TunnelVpnService : VpnService() {
         val sshUser = intent.getStringExtra(EXTRA_SSH_USER) ?: ""
         val sshPass = intent.getStringExtra(EXTRA_SSH_PASS) ?: ""
 
+        val generation = ++startGeneration
         startJob?.cancel()
         sshTunnel?.disconnect()
-        vpnInterface?.close()
+        try {
+            vpnInterface?.close()
+        } catch (_: Exception) {
+        }
         sshTunnel = null
         vpnInterface = null
 
         startJob = serviceScope.launch {
+            var tunnel: SshInjectorTunnel? = null
             try {
-                sshTunnel = SshInjectorTunnel(
+                val newTunnel = SshInjectorTunnel(
                     sshHost = sshHost,
                     sshPort = sshPort,
                     sshUser = sshUser,
@@ -92,17 +99,29 @@ class TunnelVpnService : VpnService() {
                     localSocksPort = 10808,
                     onLog = { broadcastLog(it) }
                 )
-                sshTunnel?.connect()
+                tunnel = newTunnel
+                sshTunnel = newTunnel
+                newTunnel.connect()
                 currentCoroutineContext().ensureActive()
+                if (generation != startGeneration) {
+                    tunnel.disconnect()
+                    return@launch
+                }
 
                 establishVpn()
                 isRunning = true
                 broadcastState(true)
                 broadcastLog("Tunnel connected. Device traffic is bypassed until a packet forwarder is available.")
                 updateNotification("Tunnel connected - traffic bypassed")
+            } catch (e: CancellationException) {
+                tunnel?.disconnect()
+                throw e
             } catch (e: Exception) {
-                broadcastLog("Connection failed: ${e.localizedMessage ?: "Unknown error"}")
-                handleStop()
+                tunnel?.disconnect()
+                if (generation == startGeneration) {
+                    broadcastLog("Connection failed: ${e.localizedMessage ?: "Unknown error"}")
+                    handleStop()
+                }
             }
         }
     }
@@ -113,10 +132,11 @@ class TunnelVpnService : VpnService() {
             .setMtu(1500)
             .addAddress("172.19.0.1", 30)
 
-        vpnInterface = builder.establish()
+        vpnInterface = requireNotNull(builder.establish()) { "Unable to establish VPN interface" }
     }
 
     private fun handleStop() {
+        startGeneration++
         startJob?.cancel()
         startJob = null
         sshTunnel?.disconnect()
@@ -185,5 +205,10 @@ class TunnelVpnService : VpnService() {
         handleStop()
         serviceScope.cancel()
         super.onDestroy()
+    }
+
+    override fun onRevoke() {
+        handleStop()
+        super.onRevoke()
     }
 }

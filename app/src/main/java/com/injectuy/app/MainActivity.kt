@@ -117,7 +117,22 @@ class MainActivity : AppCompatActivity() {
         appendLog("Running on $deviceModel ($deviceProduct), Android $release ($id) API $sdk. Version ${BuildConfig.VERSION_NAME} Build ${BuildConfig.VERSION_CODE}.")
 
         setupListeners()
+        restoreLockedConfigState(savedInstanceState)
         updateUiState(TunnelVpnService.isRunning)
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putString("locked_target", lockedTarget)
+        outState.putString("locked_proxy", lockedProxy)
+        outState.putString("locked_payload", lockedPayload)
+        outState.putBoolean("ssh_locked", isSshLocked)
+        outState.putBoolean("proxy_locked", isProxyLocked)
+        outState.putBoolean("payload_locked", isPayloadLocked)
+        outState.putString("config_name", activeConfigName)
+        outState.putString("server_message", activeServerMessage)
+        outState.putLong("expire_date", activeExpireDate)
+        outState.putString("pending_export_data", pendingExportData)
     }
 
     private fun setupListeners() {
@@ -256,6 +271,24 @@ class MainActivity : AppCompatActivity() {
     private fun setConfigField(field: EditText, value: String, locked: Boolean) {
         field.setText(if (locked) "" else value)
         field.hint = if (locked) "CONFIG LOCKED" else ""
+    }
+
+    private fun restoreLockedConfigState(state: Bundle?) {
+        if (state == null) return
+        lockedTarget = state.getString("locked_target")
+        lockedProxy = state.getString("locked_proxy")
+        lockedPayload = state.getString("locked_payload")
+        isSshLocked = state.getBoolean("ssh_locked")
+        isProxyLocked = state.getBoolean("proxy_locked")
+        isPayloadLocked = state.getBoolean("payload_locked")
+        activeConfigName = state.getString("config_name") ?: activeConfigName
+        activeServerMessage = state.getString("server_message") ?: activeServerMessage
+        activeExpireDate = state.getLong("expire_date")
+        pendingExportData = state.getString("pending_export_data")
+
+        if (isSshLocked) setConfigField(binding.etTarget, lockedTarget.orEmpty(), true)
+        if (isProxyLocked) setConfigField(binding.etProxy, lockedProxy.orEmpty(), true)
+        if (isPayloadLocked) setConfigField(binding.etPayload, lockedPayload.orEmpty(), true)
     }
 
     private fun currentTarget(): String = lockedTarget ?: binding.etTarget.text.toString().trim()
