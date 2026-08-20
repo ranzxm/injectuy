@@ -13,7 +13,9 @@ import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
 import android.view.View
+import android.widget.CheckBox
 import android.widget.EditText
+import android.widget.LinearLayout
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -23,6 +25,7 @@ import com.injectuy.app.security.ConfigSecurity
 import com.injectuy.app.security.EncryptedConfig
 import com.injectuy.app.service.TunnelVpnService
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
@@ -31,6 +34,46 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private var isConnected = false
     private var isConnecting = false
+    private var lockedTarget: String? = null
+    private var lockedProxy: String? = null
+    private var lockedPayload: String? = null
+    private var isSshLocked = false
+    private var isProxyLocked = false
+    private var isPayloadLocked = false
+    private var activeConfigName = "InjectUY Config"
+    private var activeServerMessage = ""
+    private var activeExpireDate = 0L
+    private var pendingExportData: String? = null
+
+    private val saveConfigLauncher = registerForActivityResult(
+        ActivityResultContracts.CreateDocument("application/octet-stream")
+    ) { uri ->
+        val data = pendingExportData ?: return@registerForActivityResult
+        pendingExportData = null
+        if (uri == null) return@registerForActivityResult
+        try {
+            contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { it.write(data) }
+            appendLog("Config saved successfully.")
+        } catch (e: Exception) {
+            appendLog("Failed to save config: ${e.localizedMessage ?: "Unknown error"}")
+        }
+    }
+
+    private val openConfigLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null) return@registerForActivityResult
+        try {
+            val raw = contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+            if (raw.isNullOrBlank()) {
+                appendLog("Error: Config file is empty or unreadable.")
+            } else {
+                importConfig(raw)
+            }
+        } catch (e: Exception) {
+            appendLog("Failed to open config: ${e.localizedMessage ?: "Unknown error"}")
+        }
+    }
 
     private val vpnPrepareLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -71,7 +114,7 @@ class MainActivity : AppCompatActivity() {
         val sdk = Build.VERSION.SDK_INT
         val id = Build.ID
 
-        appendLog("Running on $deviceModel ($deviceProduct), Android $release ($id) API $sdk. Version 1.0.1 Build 2.")
+        appendLog("Running on $deviceModel ($deviceProduct), Android $release ($id) API $sdk. Version ${BuildConfig.VERSION_NAME} Build ${BuildConfig.VERSION_CODE}.")
 
         setupListeners()
         updateUiState(TunnelVpnService.isRunning)
@@ -101,28 +144,59 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showExportDialog() {
-        val target = binding.etTarget.text.toString().trim()
-        val proxy = binding.etProxy.text.toString().trim()
-        val payload = binding.etPayload.text.toString().trim()
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(48, 0, 48, 0)
+        }
+        val nameInput = dialogInput("Config name", activeConfigName)
+        val expiryInput = dialogInput("Expiry date (YYYY-MM-DD, optional)", formatExpiryDate(activeExpireDate))
+        val messageInput = dialogInput("Custom server message (optional)", activeServerMessage)
+        val sshLock = CheckBox(this).apply { text = "Lock SSH"; isChecked = isSshLocked }
+        val proxyLock = CheckBox(this).apply { text = "Lock proxy"; isChecked = isProxyLocked }
+        val payloadLock = CheckBox(this).apply { text = "Lock payload"; isChecked = isPayloadLocked }
+        content.addView(nameInput)
+        content.addView(expiryInput)
+        content.addView(messageInput)
+        content.addView(sshLock)
+        content.addView(proxyLock)
+        content.addView(payloadLock)
 
-        val config = EncryptedConfig(
-            target = target,
-            proxy = proxy,
-            payload = payload,
-            isLocked = true
-        )
-        val encryptedData = ConfigSecurity.exportConfig(config)
-
-        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        val clip = ClipData.newPlainText("InjectUY Config", encryptedData)
-        clipboard.setPrimaryClip(clip)
+        fun buildConfig(): EncryptedConfig? {
+            val expiry = parseExpiryDate(expiryInput.text.toString().trim())
+            if (expiry == null) {
+                Toast.makeText(this, "Use expiry date format YYYY-MM-DD", Toast.LENGTH_SHORT).show()
+                return null
+            }
+            return EncryptedConfig(
+                fileName = nameInput.text.toString().trim().ifEmpty { "InjectUY Config" },
+                serverMessage = messageInput.text.toString().trim(),
+                target = currentTarget(),
+                proxy = currentProxy(),
+                payload = currentPayload(),
+                lockSsh = sshLock.isChecked,
+                lockProxy = proxyLock.isChecked,
+                lockPayload = payloadLock.isChecked,
+                expireDate = expiry
+            )
+        }
 
         AlertDialog.Builder(this)
-            .setTitle("Config Exported")
-            .setMessage("Config terenkripsi AES-256 berhasil disalin ke clipboard:\n\n$encryptedData")
-            .setPositiveButton("OK", null)
+            .setTitle("Export Config")
+            .setView(content)
+            .setPositiveButton("COPY") { _, _ ->
+                val config = buildConfig() ?: return@setPositiveButton
+                val encryptedData = ConfigSecurity.exportConfig(config)
+                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText(config.fileName, encryptedData))
+                appendLog("Config copied to clipboard.")
+            }
+            .setNeutralButton("SAVE FILE") { _, _ ->
+                val config = buildConfig() ?: return@setNeutralButton
+                pendingExportData = ConfigSecurity.exportConfig(config)
+                saveConfigLauncher.launch(sanitizeFileName(config.fileName) + ".injectuy")
+            }
+            .setNegativeButton("Cancel", null)
             .show()
-        appendLog("Config successfully exported & copied to clipboard.")
     }
 
     private fun showImportDialog() {
@@ -133,21 +207,95 @@ class MainActivity : AppCompatActivity() {
             .setTitle("Import Config")
             .setView(input)
             .setPositiveButton("IMPORT") { _, _ ->
-                val raw = input.text.toString().trim()
-                val config = ConfigSecurity.importConfig(raw)
-                if (config != null) {
-                    binding.etTarget.setText(config.target)
-                    binding.etProxy.setText(config.proxy)
-                    binding.etPayload.setText(config.payload)
-                    appendLog("Config imported successfully!")
-                    Toast.makeText(this, "Config Imported", Toast.LENGTH_SHORT).show()
-                } else {
-                    appendLog("Error: Invalid or corrupted config string!")
-                    Toast.makeText(this, "Failed to decrypt config", Toast.LENGTH_SHORT).show()
-                }
+                importConfig(input.text.toString())
             }
+            .setNeutralButton("OPEN FILE") { _, _ -> openConfigLauncher.launch(arrayOf("application/octet-stream", "text/plain", "*/*")) }
             .setNegativeButton("Cancel", null)
             .show()
+    }
+
+    private fun importConfig(raw: String) {
+        val config = ConfigSecurity.importConfig(raw)
+        when {
+            config == null -> {
+                appendLog("Error: Invalid or corrupted config string.")
+                Toast.makeText(this, "Failed to decrypt config", Toast.LENGTH_SHORT).show()
+            }
+            ConfigSecurity.isExpired(config) -> {
+                appendLog("Error: Config has expired.")
+                Toast.makeText(this, "Config has expired", Toast.LENGTH_SHORT).show()
+            }
+            else -> applyImportedConfig(config)
+        }
+    }
+
+    private fun applyImportedConfig(config: EncryptedConfig) {
+        val legacyLockAll = config.isLocked
+        isSshLocked = config.lockSsh || legacyLockAll
+        isProxyLocked = config.lockProxy || legacyLockAll
+        isPayloadLocked = config.lockPayload || legacyLockAll
+        lockedTarget = config.target.takeIf { isSshLocked }
+        lockedProxy = config.proxy.takeIf { isProxyLocked }
+        lockedPayload = config.payload.takeIf { isPayloadLocked }
+        activeConfigName = config.fileName.ifBlank { "InjectUY Config" }
+        activeServerMessage = config.serverMessage
+        activeExpireDate = config.expireDate
+
+        setConfigField(binding.etTarget, config.target, isSshLocked)
+        setConfigField(binding.etProxy, config.proxy, isProxyLocked)
+        setConfigField(binding.etPayload, config.payload, isPayloadLocked)
+        setConfigFormEnabled(!isConnected && !isConnecting)
+
+        appendLog("Config '$activeConfigName' imported successfully.")
+        if (activeServerMessage.isNotBlank()) {
+            appendLog("Server message: $activeServerMessage")
+        }
+        Toast.makeText(this, "Config Imported", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun setConfigField(field: EditText, value: String, locked: Boolean) {
+        field.setText(if (locked) "" else value)
+        field.hint = if (locked) "CONFIG LOCKED" else ""
+    }
+
+    private fun currentTarget(): String = lockedTarget ?: binding.etTarget.text.toString().trim()
+
+    private fun currentProxy(): String = lockedProxy ?: binding.etProxy.text.toString().trim()
+
+    private fun currentPayload(): String = lockedPayload ?: binding.etPayload.text.toString().trim()
+
+    private fun dialogInput(hint: String, value: String): EditText {
+        return EditText(this).apply {
+            this.hint = hint
+            setText(value)
+        }
+    }
+
+    private fun parseExpiryDate(value: String): Long? {
+        if (value.isBlank()) return 0L
+        val formatter = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { isLenient = false }
+        val date = try {
+            formatter.parse(value)
+        } catch (_: Exception) {
+            null
+        } ?: return null
+        if (formatter.format(date) != value) return null
+        return Calendar.getInstance().apply {
+            time = date
+            set(Calendar.HOUR_OF_DAY, 23)
+            set(Calendar.MINUTE, 59)
+            set(Calendar.SECOND, 59)
+            set(Calendar.MILLISECOND, 999)
+        }.timeInMillis
+    }
+
+    private fun formatExpiryDate(expiryDate: Long): String {
+        if (expiryDate <= 0) return ""
+        return SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(expiryDate))
+    }
+
+    private fun sanitizeFileName(fileName: String): String {
+        return fileName.replace(Regex("[\\\\/:*?\"<>|]"), "_").ifBlank { "InjectUY Config" }
     }
 
     override fun onStart() {
@@ -169,7 +317,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun prepareAndStart() {
-        val targetRaw = binding.etTarget.text.toString().trim()
+        val targetRaw = currentTarget()
         if (targetRaw.isEmpty()) {
             Toast.makeText(this, "Target is required", Toast.LENGTH_SHORT).show()
             return
@@ -187,9 +335,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startTunnelService() {
-        val targetRaw = binding.etTarget.text.toString().trim()
-        val proxyRaw = binding.etProxy.text.toString().trim()
-        val payloadRaw = binding.etPayload.text.toString().trim()
+        val targetRaw = currentTarget()
+        val proxyRaw = currentProxy()
+        val payloadRaw = currentPayload()
 
         val creds = TargetParser.parse(targetRaw)
         val (proxyHost, proxyPort) = TargetParser.parseProxy(proxyRaw)
@@ -242,9 +390,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setConfigFormEnabled(enabled: Boolean) {
-        binding.etTarget.isEnabled = enabled
-        binding.etProxy.isEnabled = enabled
-        binding.etPayload.isEnabled = enabled
+        binding.etTarget.isEnabled = enabled && !isSshLocked
+        binding.etProxy.isEnabled = enabled && !isProxyLocked
+        binding.etPayload.isEnabled = enabled && !isPayloadLocked
         binding.btnImport.isEnabled = enabled
         binding.btnExport.isEnabled = enabled
     }

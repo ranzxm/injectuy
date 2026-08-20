@@ -3,8 +3,12 @@ package com.injectuy.app
 import com.injectuy.app.parser.PayloadParser
 import com.injectuy.app.parser.TargetParser
 import com.injectuy.app.parser.VmessParser
+import com.injectuy.app.security.ConfigSecurity
+import com.injectuy.app.security.EncryptedConfig
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TunnelUnitTest {
@@ -45,6 +49,14 @@ class TunnelUnitTest {
 
         assertEquals("2001:db8::1", host)
         assertEquals(8443, port)
+    }
+
+    @Test
+    fun configExpiryIsEnforcedOnlyAfterExpiryTime() {
+        val config = EncryptedConfig(expireDate = 1_000L)
+
+        assertFalse(ConfigSecurity.isExpired(config, now = 1_000L))
+        assertTrue(ConfigSecurity.isExpired(config, now = 1_001L))
     }
 
     @Test

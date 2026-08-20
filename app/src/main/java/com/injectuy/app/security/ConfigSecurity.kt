@@ -8,13 +8,19 @@ import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 data class EncryptedConfig(
-    val version: Int = 1,
+    val version: Int = 2,
+    val fileName: String = "InjectUY Config",
     val note: String = "InjectUY Locked Config",
+    val serverMessage: String = "",
     val target: String = "",
     val proxy: String = "",
     val payload: String = "",
-    val isLocked: Boolean = true,
-    val expireDate: Long = 0L
+    val lockSsh: Boolean = false,
+    val lockProxy: Boolean = false,
+    val lockPayload: Boolean = false,
+    val expireDate: Long = 0L,
+    // Retained so version 1 configs remain importable.
+    val isLocked: Boolean = false
 )
 
 object ConfigSecurity {
@@ -56,5 +62,9 @@ object ConfigSecurity {
         } catch (e: Exception) {
             null
         }
+    }
+
+    fun isExpired(config: EncryptedConfig, now: Long = System.currentTimeMillis()): Boolean {
+        return config.expireDate > 0 && now > config.expireDate
     }
 }
