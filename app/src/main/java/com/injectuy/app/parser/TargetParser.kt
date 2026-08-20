@@ -14,25 +14,13 @@ data class TargetCredentials(
 object TargetParser {
     fun parse(target: String): TargetCredentials {
         val trimmed = target.trim()
-        if (!trimmed.contains("@")) {
-            val parts = trimmed.split(":")
-            return TargetCredentials(
-                host = parts.getOrNull(0) ?: "",
-                port = parts.getOrNull(1)?.toIntOrNull() ?: 22
-            )
-        }
-
-        val atParts = trimmed.split("@", limit = 2)
-        val hostPart = atParts[0]
-        val authPart = atParts.getOrElse(1) { "" }
-
-        val hostParts = hostPart.split(":")
-        val host = hostParts.getOrNull(0) ?: ""
-        val port = hostParts.getOrNull(1)?.toIntOrNull() ?: 22
-
-        val authParts = authPart.split(":")
-        val user = authParts.getOrNull(0) ?: ""
-        val pass = authParts.getOrNull(1) ?: ""
+        val atIndex = trimmed.indexOf('@')
+        val hostPart = if (atIndex >= 0) trimmed.substring(0, atIndex) else trimmed
+        val authPart = if (atIndex >= 0) trimmed.substring(atIndex + 1) else ""
+        val (host, port) = parseHostPort(hostPart, 22)
+        val colonIndex = authPart.indexOf(':')
+        val user = if (colonIndex >= 0) authPart.substring(0, colonIndex) else authPart
+        val pass = if (colonIndex >= 0) authPart.substring(colonIndex + 1) else ""
 
         return TargetCredentials(host, port, user, pass)
     }
@@ -41,9 +29,28 @@ object TargetParser {
      * Parses proxy string: host:port (e.g. 104.17.70.206:80)
      */
     fun parseProxy(proxy: String): Pair<String, Int> {
-        val parts = proxy.trim().split(":")
-        val host = parts.getOrNull(0) ?: ""
-        val port = parts.getOrNull(1)?.toIntOrNull() ?: 8080
-        return Pair(host, port)
+        return parseHostPort(proxy.trim(), 8080)
     }
+
+    private fun parseHostPort(value: String, defaultPort: Int): Pair<String, Int> {
+        if (value.startsWith("[")) {
+            val closingBracket = value.indexOf(']')
+            if (closingBracket > 0) {
+                val host = value.substring(1, closingBracket)
+                val port = value.substring(closingBracket + 1)
+                    .removePrefix(":")
+                    .toValidPortOrNull()
+                    ?: defaultPort
+                return host to port
+            }
+        }
+
+        val colonIndex = value.lastIndexOf(':')
+        if (colonIndex > 0 && value.indexOf(':') == colonIndex) {
+            return value.substring(0, colonIndex) to (value.substring(colonIndex + 1).toValidPortOrNull() ?: defaultPort)
+        }
+        return value to defaultPort
+    }
+
+    private fun String.toValidPortOrNull(): Int? = toIntOrNull()?.takeIf { it in 1..65535 }
 }

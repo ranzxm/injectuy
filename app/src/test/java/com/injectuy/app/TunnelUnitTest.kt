@@ -30,6 +30,24 @@ class TunnelUnitTest {
     }
 
     @Test
+    fun targetParserPreservesPasswordColonsAndValidatesPort() {
+        val creds = TargetParser.parse("ssh.example:70000@user:p:ass")
+
+        assertEquals("ssh.example", creds.host)
+        assertEquals(22, creds.port)
+        assertEquals("user", creds.user)
+        assertEquals("p:ass", creds.pass)
+    }
+
+    @Test
+    fun proxyParserSupportsBracketedIpv6() {
+        val (host, port) = TargetParser.parseProxy("[2001:db8::1]:8443")
+
+        assertEquals("2001:db8::1", host)
+        assertEquals(8443, port)
+    }
+
+    @Test
     fun testPayloadParser() {
         val rawPayload = "CONNECT [host_port] [protocol][crlf]Host: [host][crlf][crlf]"
         val parsed = PayloadParser.parse(rawPayload, "sg1.server.com", 80)

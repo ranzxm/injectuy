@@ -15,13 +15,18 @@ import com.injectuy.app.core.SshInjectorTunnel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 
 class TunnelVpnService : VpnService() {
 
     private var vpnInterface: ParcelFileDescriptor? = null
     private var sshTunnel: SshInjectorTunnel? = null
-    private val serviceScope = CoroutineScope(Dispatchers.IO + Job())
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var startJob: Job? = null
 
     companion object {
         const val ACTION_START = "com.injectuy.START"
@@ -68,7 +73,13 @@ class TunnelVpnService : VpnService() {
         val sshUser = intent.getStringExtra(EXTRA_SSH_USER) ?: ""
         val sshPass = intent.getStringExtra(EXTRA_SSH_PASS) ?: ""
 
-        serviceScope.launch {
+        startJob?.cancel()
+        sshTunnel?.disconnect()
+        vpnInterface?.close()
+        sshTunnel = null
+        vpnInterface = null
+
+        startJob = serviceScope.launch {
             try {
                 sshTunnel = SshInjectorTunnel(
                     sshHost = sshHost,
@@ -82,12 +93,14 @@ class TunnelVpnService : VpnService() {
                     onLog = { broadcastLog(it) }
                 )
                 sshTunnel?.connect()
+                currentCoroutineContext().ensureActive()
 
                 establishVpn()
                 isRunning = true
                 broadcastState(true)
                 updateNotification("Connected")
             } catch (e: Exception) {
+                broadcastLog("Connection failed: ${e.localizedMessage ?: "Unknown error"}")
                 handleStop()
             }
         }
@@ -106,6 +119,8 @@ class TunnelVpnService : VpnService() {
     }
 
     private fun handleStop() {
+        startJob?.cancel()
+        startJob = null
         sshTunnel?.disconnect()
         sshTunnel = null
         try {
@@ -113,10 +128,8 @@ class TunnelVpnService : VpnService() {
             vpnInterface = null
         } catch (_: Exception) {}
 
-        if (isRunning) {
-            isRunning = false
-            broadcastState(false)
-        }
+        isRunning = false
+        broadcastState(false)
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -172,6 +185,7 @@ class TunnelVpnService : VpnService() {
 
     override fun onDestroy() {
         handleStop()
+        serviceScope.cancel()
         super.onDestroy()
     }
 }
