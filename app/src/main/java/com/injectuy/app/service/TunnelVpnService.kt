@@ -98,7 +98,8 @@ class TunnelVpnService : VpnService() {
                 establishVpn()
                 isRunning = true
                 broadcastState(true)
-                updateNotification("Connected")
+                broadcastLog("Tunnel connected. Device traffic is bypassed until a packet forwarder is available.")
+                updateNotification("Tunnel connected - traffic bypassed")
             } catch (e: Exception) {
                 broadcastLog("Connection failed: ${e.localizedMessage ?: "Unknown error"}")
                 handleStop()
@@ -111,9 +112,6 @@ class TunnelVpnService : VpnService() {
             .setSession("InjectUY")
             .setMtu(1500)
             .addAddress("172.19.0.1", 30)
-            .addDnsServer("8.8.8.8")
-            .addDnsServer("1.1.1.1")
-            .addRoute("0.0.0.0", 0)
 
         vpnInterface = builder.establish()
     }
