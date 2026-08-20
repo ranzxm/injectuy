@@ -614,8 +614,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun appendLog(text: String) {
-        if (binding.tvLog.length > 20_000) {
-            binding.tvLog.text = binding.tvLog.text.subSequence(binding.tvLog.length - 16_000, binding.tvLog.length)
+        if (binding.tvLog.length() > 20_000) {
+            binding.tvLog.text = binding.tvLog.text.subSequence(binding.tvLog.length() - 16_000, binding.tvLog.length())
         }
         val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
         if (text.trimStart().startsWith("<")) {
