@@ -32,10 +32,15 @@ object VmessParser {
             val decodedJson = String(Base64.decode(base64Data, Base64.DEFAULT), StandardCharsets.UTF_8)
             val jsonObject = gson.fromJson(decodedJson, JsonObject::class.java)
 
+            val address = jsonObject.get("add")?.asString?.trim().orEmpty()
+            val port = jsonObject.get("port")?.asString?.toIntOrNull() ?: 443
+            val id = jsonObject.get("id")?.asString?.trim().orEmpty()
+            if (address.isBlank() || id.isBlank() || port !in 1..65535) return null
+
             VmessBean(
-                add = jsonObject.get("add")?.asString ?: "",
-                port = jsonObject.get("port")?.asString?.toIntOrNull() ?: 443,
-                id = jsonObject.get("id")?.asString ?: "",
+                add = address,
+                port = port,
+                id = id,
                 aid = jsonObject.get("aid")?.asString?.toIntOrNull() ?: 0,
                 scy = jsonObject.get("scy")?.asString ?: "auto",
                 net = jsonObject.get("net")?.asString ?: "ws",

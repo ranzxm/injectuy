@@ -20,6 +20,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class TunnelVpnService : VpnService() {
@@ -28,6 +29,7 @@ class TunnelVpnService : VpnService() {
     private var sshTunnel: SshInjectorTunnel? = null
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var startJob: Job? = null
+    private var expiryJob: Job? = null
     @Volatile private var startGeneration = 0L
 
     companion object {
@@ -44,6 +46,7 @@ class TunnelVpnService : VpnService() {
         const val EXTRA_SSH_USER = "ssh_user"
         const val EXTRA_SSH_PASS = "ssh_pass"
         const val EXTRA_SERVER_MESSAGE = "server_message"
+        const val EXTRA_CONFIG_EXPIRY = "config_expiry"
 
         var isRunning = false
             private set
@@ -76,6 +79,7 @@ class TunnelVpnService : VpnService() {
         val sshUser = intent.getStringExtra(EXTRA_SSH_USER) ?: ""
         val sshPass = intent.getStringExtra(EXTRA_SSH_PASS) ?: ""
         val serverMessage = intent.getStringExtra(EXTRA_SERVER_MESSAGE) ?: ""
+        val configExpiry = intent.getLongExtra(EXTRA_CONFIG_EXPIRY, 0L)
 
         val generation = ++startGeneration
         startJob?.cancel()
@@ -116,6 +120,7 @@ class TunnelVpnService : VpnService() {
                 broadcastState(true)
                 broadcastLog("Connection established.")
                 updateNotification("Connection established")
+                scheduleExpiry(configExpiry)
             } catch (e: CancellationException) {
                 tunnel?.disconnect()
                 throw e
@@ -142,6 +147,8 @@ class TunnelVpnService : VpnService() {
         startGeneration++
         startJob?.cancel()
         startJob = null
+        expiryJob?.cancel()
+        expiryJob = null
         sshTunnel?.disconnect()
         sshTunnel = null
         try {
@@ -209,6 +216,22 @@ class TunnelVpnService : VpnService() {
     private fun updateNotification(status: String) {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.notify(1, buildNotification(status))
+    }
+
+    private fun scheduleExpiry(expiryDate: Long) {
+        expiryJob?.cancel()
+        if (expiryDate <= 0) return
+        val remaining = expiryDate - System.currentTimeMillis()
+        if (remaining <= 0) {
+            broadcastLog("Config has expired.")
+            handleStop()
+            return
+        }
+        expiryJob = serviceScope.launch {
+            delay(remaining)
+            broadcastLog("Config has expired.")
+            handleStop()
+        }
     }
 
     override fun onDestroy() {

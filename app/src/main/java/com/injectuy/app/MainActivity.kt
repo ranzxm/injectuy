@@ -2,6 +2,7 @@ package com.injectuy.app
 
 import android.app.AlertDialog
 import android.app.DatePickerDialog
+import android.Manifest
 import android.content.BroadcastReceiver
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -22,12 +23,15 @@ import android.widget.PopupMenu
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import com.injectuy.app.databinding.ActivityMainBinding
 import com.injectuy.app.parser.TargetParser
 import com.injectuy.app.security.ConfigSecurity
 import com.injectuy.app.security.EncryptedConfig
 import com.injectuy.app.service.TunnelVpnService
 import java.text.SimpleDateFormat
+import java.io.ByteArrayOutputStream
+import java.nio.charset.StandardCharsets
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
@@ -56,6 +60,7 @@ class MainActivity : AppCompatActivity() {
         const val MENU_CLEAR_LOG = 4
         const val PREFS_NAME = "injectuy_config"
         const val PREF_CONFIG = "saved_config"
+        const val MAX_CONFIG_BYTES = 64 * 1024
     }
 
     private val saveConfigLauncher = registerForActivityResult(
@@ -65,7 +70,9 @@ class MainActivity : AppCompatActivity() {
         pendingExportData = null
         if (uri == null) return@registerForActivityResult
         try {
-            contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { it.write(data) }
+            requireNotNull(contentResolver.openOutputStream(uri)) { "Unable to open destination" }
+                .bufferedWriter()
+                .use { it.write(data) }
             appendLog("Config saved successfully.")
         } catch (e: Exception) {
             appendLog("Failed to save config: ${e.localizedMessage ?: "Unknown error"}")
@@ -77,7 +84,19 @@ class MainActivity : AppCompatActivity() {
     ) { uri ->
         if (uri == null) return@registerForActivityResult
         try {
-            val raw = contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+            val raw = contentResolver.openInputStream(uri)?.use { input ->
+                val output = ByteArrayOutputStream()
+                val buffer = ByteArray(4096)
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read == -1) break
+                    if (output.size() + read > MAX_CONFIG_BYTES) {
+                        throw IllegalArgumentException("Config file is too large")
+                    }
+                    output.write(buffer, 0, read)
+                }
+                output.toString(StandardCharsets.UTF_8.name())
+            }
             if (raw.isNullOrBlank()) {
                 appendLog("Error: Config file is empty or unreadable.")
             } else {
@@ -97,6 +116,16 @@ class MainActivity : AppCompatActivity() {
             isConnecting = false
             updateUiState(false)
             appendLog("VPN Permission Rejected.")
+        }
+    }
+
+    private val notificationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            startVpnPreparation()
+        } else {
+            Toast.makeText(this, "Notification permission is required to control the tunnel", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -311,6 +340,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun importConfig(raw: String) {
+        if (raw.length > MAX_CONFIG_BYTES) {
+            appendLog("Error: Config is too large.")
+            return
+        }
         val config = ConfigSecurity.importConfig(raw)
         when {
             config == null -> {
@@ -410,6 +443,11 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, "Disconnect before clearing config", Toast.LENGTH_SHORT).show()
             return
         }
+        clearConfigState()
+        appendLog("Locked config cleared.")
+    }
+
+    private fun clearConfigState() {
         isApplyingConfig = true
         lockedTarget = null
         lockedProxy = null
@@ -430,7 +468,6 @@ class MainActivity : AppCompatActivity() {
         setConfigFormEnabled(true)
         updateLockedConfigStatus()
         getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().remove(PREF_CONFIG).apply()
-        appendLog("Locked config cleared.")
     }
 
     private fun updateLockedConfigStatus() {
@@ -479,12 +516,29 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun prepareAndStart() {
+        if (activeExpireDate > 0 && System.currentTimeMillis() > activeExpireDate) {
+            clearConfigState()
+            appendLog("Config has expired and was cleared.")
+            Toast.makeText(this, "Config has expired", Toast.LENGTH_SHORT).show()
+            return
+        }
         val targetRaw = currentTarget()
         if (targetRaw.isEmpty()) {
             Toast.makeText(this, "Target is required", Toast.LENGTH_SHORT).show()
             return
         }
 
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            return
+        }
+
+        startVpnPreparation()
+    }
+
+    private fun startVpnPreparation() {
         isConnecting = true
         setConnectingUiState()
 
@@ -511,6 +565,7 @@ class MainActivity : AppCompatActivity() {
             putExtra(TunnelVpnService.EXTRA_SSH_USER, creds.user)
             putExtra(TunnelVpnService.EXTRA_SSH_PASS, creds.pass)
             putExtra(TunnelVpnService.EXTRA_SERVER_MESSAGE, activeServerMessage)
+            putExtra(TunnelVpnService.EXTRA_CONFIG_EXPIRY, activeExpireDate)
             putExtra(TunnelVpnService.EXTRA_PROXY_HOST, proxyHost)
             putExtra(TunnelVpnService.EXTRA_PROXY_PORT, proxyPort)
             putExtra(TunnelVpnService.EXTRA_PAYLOAD, payloadRaw)
@@ -559,6 +614,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun appendLog(text: String) {
+        if (binding.tvLog.length > 20_000) {
+            binding.tvLog.text = binding.tvLog.text.subSequence(binding.tvLog.length - 16_000, binding.tvLog.length)
+        }
         val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
         if (text.trimStart().startsWith("<")) {
             val formatted = com.injectuy.app.util.LogFormatter.format(text)

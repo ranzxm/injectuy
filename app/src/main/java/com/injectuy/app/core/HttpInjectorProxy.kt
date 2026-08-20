@@ -3,9 +3,11 @@ package com.injectuy.app.core
 import com.injectuy.app.parser.PayloadParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.InetSocketAddress
+import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.nio.charset.StandardCharsets
@@ -27,7 +29,7 @@ class HttpInjectorProxy(
 
     suspend fun start() = withContext(Dispatchers.IO) {
         try {
-            serverSocket = ServerSocket(listenPort)
+            serverSocket = ServerSocket(listenPort, 50, InetAddress.getLoopbackAddress())
             isRunning = true
             onLog("Proxy Injector ready on 127.0.0.1:$listenPort")
 
@@ -44,8 +46,10 @@ class HttpInjectorProxy(
         var remoteSocket: Socket? = null
         try {
             onLog("Connecting to proxy $proxyHost:$proxyPort...")
-            remoteSocket = Socket()
-            remoteSocket.connect(InetSocketAddress(proxyHost, proxyPort), 10000)
+            val socket = Socket()
+            remoteSocket = socket
+            socket.connect(InetSocketAddress(proxyHost, proxyPort), 10000)
+            socket.soTimeout = 15_000
 
             val clientIn = client.getInputStream()
             val clientOut = client.getOutputStream()
@@ -63,20 +67,35 @@ class HttpInjectorProxy(
             }
             onLog("Payload injected -> Waiting HTTP response...")
 
+            val header = ByteArrayOutputStream()
             val buffer = ByteArray(4096)
-            val read = remoteIn.read(buffer)
-            if (read > 0) {
-                val res = String(buffer, 0, read)
-                val statusLine = res.lines().firstOrNull() ?: ""
-                onLog("Status: $statusLine")
-
-                val t1 = Thread { pipeStream(clientIn, remoteOut) }
-                val t2 = Thread { pipeStream(remoteIn, clientOut) }
-                t1.start()
-                t2.start()
-                t1.join()
-                t2.join()
+            var headerEnd = -1
+            while (headerEnd == -1) {
+                val read = remoteIn.read(buffer)
+                if (read == -1) throw java.io.IOException("Proxy response ended before headers completed")
+                header.write(buffer, 0, read)
+                val bytes = header.toByteArray()
+                if (bytes.size > 16 * 1024) throw java.io.IOException("Proxy response header is too large")
+                headerEnd = findHeaderEnd(bytes)
             }
+            val response = header.toByteArray()
+            val statusLine = String(response, 0, headerEnd, StandardCharsets.ISO_8859_1)
+                .lineSequence()
+                .firstOrNull()
+                .orEmpty()
+            onLog("Proxy response: $statusLine")
+            if (response.size > headerEnd) {
+                clientOut.write(response, headerEnd, response.size - headerEnd)
+                clientOut.flush()
+            }
+            socket.soTimeout = 0
+
+            val t1 = Thread { pipeStream(clientIn, remoteOut) }
+            val t2 = Thread { pipeStream(remoteIn, clientOut) }
+            t1.start()
+            t2.start()
+            t1.join()
+            t2.join()
         } catch (e: Exception) {
             onLog("Tunnel Error: ${e.message}")
         } finally {
@@ -94,6 +113,16 @@ class HttpInjectorProxy(
                 output.flush()
             }
         } catch (_: Exception) {}
+    }
+
+    private fun findHeaderEnd(bytes: ByteArray): Int {
+        for (index in 3 until bytes.size) {
+            if (bytes[index - 3] == '\r'.code.toByte() && bytes[index - 2] == '\n'.code.toByte() &&
+                bytes[index - 1] == '\r'.code.toByte() && bytes[index] == '\n'.code.toByte()) {
+                return index + 1
+            }
+        }
+        return -1
     }
 
     fun stop() {

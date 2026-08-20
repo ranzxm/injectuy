@@ -13,6 +13,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayInputStream
+import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 import java.io.SequenceInputStream
@@ -98,6 +99,7 @@ class SshInjectorTunnel(
                     rawOutputStream = out
 
                     if (payload.isNotEmpty()) {
+                        activeSocket.soTimeout = 15_000
                         val parsed = PayloadParser.parse(payload, host, port)
                         val chunks = parsed.split("[split]")
                         for (chunk in chunks) {
@@ -118,6 +120,9 @@ class SshInjectorTunnel(
                             if (read <= 0) break
                             val chunkStr = String(readBuffer, 0, read, StandardCharsets.ISO_8859_1)
                             headerBuffer.append(chunkStr)
+                            if (headerBuffer.length > 16 * 1024) {
+                                throw IOException("Proxy response header is too large")
+                            }
 
                             val doubleCrlfIdx = headerBuffer.indexOf("\r\n\r\n")
                             if (doubleCrlfIdx != -1) {
@@ -136,6 +141,9 @@ class SshInjectorTunnel(
                                 }
                             }
                         }
+                        if (!isHeaderComplete) {
+                            throw IOException("Proxy response ended before headers completed")
+                        }
 
                         if (serverMessage.isNotBlank()) {
                             onLog("Server Message:")
@@ -147,6 +155,7 @@ class SshInjectorTunnel(
                         } else {
                             `in`
                         }
+                        activeSocket.soTimeout = 0
                     } else {
                         wrappedInputStream = `in`
                     }
