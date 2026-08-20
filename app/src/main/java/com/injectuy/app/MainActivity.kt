@@ -156,6 +156,10 @@ class MainActivity : AppCompatActivity() {
         binding.btnImport.setOnClickListener {
             showImportDialog()
         }
+
+        binding.btnClearConfig.setOnClickListener {
+            clearLockedConfig()
+        }
     }
 
     private fun showExportDialog() {
@@ -260,6 +264,7 @@ class MainActivity : AppCompatActivity() {
         setConfigField(binding.etProxy, config.proxy, isProxyLocked)
         setConfigField(binding.etPayload, config.payload, isPayloadLocked)
         setConfigFormEnabled(!isConnected && !isConnecting)
+        updateLockedConfigStatus()
 
         appendLog("Config '$activeConfigName' imported successfully.")
         if (activeServerMessage.isNotBlank()) {
@@ -289,6 +294,42 @@ class MainActivity : AppCompatActivity() {
         if (isSshLocked) setConfigField(binding.etTarget, lockedTarget.orEmpty(), true)
         if (isProxyLocked) setConfigField(binding.etProxy, lockedProxy.orEmpty(), true)
         if (isPayloadLocked) setConfigField(binding.etPayload, lockedPayload.orEmpty(), true)
+        updateLockedConfigStatus()
+    }
+
+    private fun clearLockedConfig() {
+        if (isConnected || isConnecting) {
+            Toast.makeText(this, "Disconnect before clearing config", Toast.LENGTH_SHORT).show()
+            return
+        }
+        lockedTarget = null
+        lockedProxy = null
+        lockedPayload = null
+        isSshLocked = false
+        isProxyLocked = false
+        isPayloadLocked = false
+        activeConfigName = "InjectUY Config"
+        activeServerMessage = ""
+        activeExpireDate = 0L
+        binding.etTarget.text?.clear()
+        binding.etProxy.text?.clear()
+        binding.etPayload.text?.clear()
+        binding.etTarget.hint = ""
+        binding.etProxy.hint = ""
+        binding.etPayload.hint = ""
+        setConfigFormEnabled(true)
+        updateLockedConfigStatus()
+        appendLog("Locked config cleared.")
+    }
+
+    private fun updateLockedConfigStatus() {
+        val hasLockedConfig = isSshLocked || isProxyLocked || isPayloadLocked
+        binding.btnClearConfig.visibility = if (hasLockedConfig) View.VISIBLE else View.GONE
+        binding.tvConfigStatus.visibility = if (hasLockedConfig) View.VISIBLE else View.GONE
+        if (hasLockedConfig) {
+            val expiry = if (activeExpireDate > 0) formatExpiryDate(activeExpireDate) else "never"
+            binding.tvConfigStatus.text = "CONFIG LOCKED - expires: $expiry"
+        }
     }
 
     private fun currentTarget(): String = lockedTarget ?: binding.etTarget.text.toString().trim()
@@ -428,6 +469,7 @@ class MainActivity : AppCompatActivity() {
         binding.etPayload.isEnabled = enabled && !isPayloadLocked
         binding.btnImport.isEnabled = enabled
         binding.btnExport.isEnabled = enabled
+        binding.btnClearConfig.isEnabled = enabled
     }
 
     private fun appendLog(text: String) {
